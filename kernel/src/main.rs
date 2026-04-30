@@ -35,6 +35,8 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
     serial_log::init();
     log::info!("Kernel starts with hart_id: {hartid}, dtb: 0x{dtb_address:x}",);
 
+    task::init();
+
     let blk_device_base = virtio::find_virtio_blk().unwrap();
     log::info!("Found device id: {blk_device_base:x}");
 
@@ -104,7 +106,7 @@ fn boot_core(core: usize) {
 
     unsafe {
         let sp_kernel_view = sp + mm::KERNEL_DIRECT_MAPPING_BASE.raw();
-        *(sp_kernel_view as *mut usize) = Arch::get_root_page_table();
+        *(sp_kernel_view as *mut usize) = <Arch as arch::MemoryModel>::get_root_page_table();
     }
 
     let ret = riscv::sbi::hart_start(
