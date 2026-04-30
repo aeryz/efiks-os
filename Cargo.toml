@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernel", "riscv", "ksync", "kmalloc"]
+members = ["kernel", "riscv", "ksync", "kmalloc", "vsfs"]
 resolver = "3"
 
 [workspace.package]
@@ -10,3 +10,4 @@ edition = "2024"
 riscv = { path = "./riscv", default-features = false }
 ksync = { path = "./ksync", default-features = false }
 kmalloc = { path = "./kmalloc", default-features = false }
+bitflags = "2.11.0"

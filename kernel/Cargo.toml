@@ -5,7 +5,7 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
-bitflags = "2.11.0"
+bitflags = { workspace = true }
 riscv = { workspace = true }
 ksync = { workspace = true }
 log = "0.4.29"

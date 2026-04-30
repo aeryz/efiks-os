@@ -9,3 +9,5 @@ target
 .direnv
 
 result
+
+*.img
