@@ -41,7 +41,7 @@ inum  |  reclen  |  strlen  |  name
 
 */
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub struct INode {
     pub ty: Type,
@@ -51,7 +51,7 @@ pub struct INode {
     pub indirect_block: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub struct Metadata {
     /// ID of the device containing file
@@ -61,7 +61,7 @@ pub struct Metadata {
     pub sz: u32,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u16)]
 pub enum Type {
     Directory = 1,
