@@ -47,8 +47,34 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     vfs::init();
 
-    let file = vfs::open(b"/foo/bar").unwrap();
+    let mut file = vfs::open(b"/foo/bar").unwrap();
     log::info!("file: {:?}", file.inode);
+
+    for _ in 0..4 {
+        let mut buf = [0; 4];
+        let n_read = vfs::read(&mut file, &mut buf).unwrap();
+
+        unsafe {
+            log::info!("{:?}", str::from_utf8_unchecked(&buf[0..n_read]));
+        }
+    }
+
+    vfs::seek(&mut file, vfs::SeekFrom::Start(0)).unwrap();
+
+    vfs::write(&mut file, b"amazing").unwrap();
+
+    vfs::seek(&mut file, vfs::SeekFrom::Start(0)).unwrap();
+
+    for _ in 0..4 {
+        let mut buf = [0; 4];
+        let n_read = vfs::read(&mut file, &mut buf).unwrap();
+
+        unsafe {
+            log::info!("{:?}", str::from_utf8_unchecked(&buf[0..n_read]));
+        }
+    }
+
+    panic!("");
 
     let mut core_ctxs = Vec::new();
 

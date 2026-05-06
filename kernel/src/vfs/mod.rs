@@ -60,6 +60,172 @@ pub fn open(path: &[u8]) -> Option<File> {
     })
 }
 
+pub fn read(file: &mut File, buf: &mut [u8]) -> Result<usize, ()> {
+    const BLOCK_SIZE: usize = 4096;
+    const SECTOR_SIZE: usize = 512;
+    const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
+
+    if file.inode.ty != Type::File {
+        return Err(());
+    }
+
+    let file_size = file.inode.metadata.sz as usize;
+    if file.offset >= file_size || buf.is_empty() {
+        return Ok(0);
+    }
+
+    let mut total_read = 0;
+    let mut sector_buf = [0; SECTOR_SIZE];
+    let mut remaining = core::cmp::min(buf.len(), file_size - file.offset);
+
+    while remaining > 0 {
+        let logical_block = file.offset / BLOCK_SIZE;
+        if logical_block >= file.inode.direct_blocks.len() {
+            return if total_read > 0 {
+                Ok(total_read)
+            } else {
+                Err(())
+            };
+        }
+
+        let block = file.inode.direct_blocks[logical_block];
+        if block == 0 {
+            return if total_read > 0 {
+                Ok(total_read)
+            } else {
+                Err(())
+            };
+        }
+
+        let block_offset = file.offset % BLOCK_SIZE;
+        let sector_in_block = block_offset / SECTOR_SIZE;
+        let sector_offset = block_offset % SECTOR_SIZE;
+        let sector = block as usize * SECTORS_PER_BLOCK + sector_in_block;
+
+        if unsafe { virtio::block::read(&mut sector_buf, sector as u64) }
+            != block::VirtioBlkStatus::Ok as u8
+        {
+            return Err(());
+        }
+
+        let readable_from_sector = SECTOR_SIZE - sector_offset;
+        let to_copy = core::cmp::min(readable_from_sector, remaining);
+        buf[total_read..total_read + to_copy]
+            .copy_from_slice(&sector_buf[sector_offset..sector_offset + to_copy]);
+
+        file.offset += to_copy;
+        total_read += to_copy;
+        remaining -= to_copy;
+    }
+
+    Ok(total_read)
+}
+
+pub fn write(file: &mut File, buf: &[u8]) -> Result<usize, ()> {
+    const BLOCK_SIZE: usize = 4096;
+    const SECTOR_SIZE: usize = 512;
+    const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
+
+    if file.inode.ty != Type::File {
+        return Err(());
+    }
+
+    let file_size = file.inode.metadata.sz as usize;
+    if file.offset >= file_size || buf.is_empty() {
+        return Ok(0);
+    }
+
+    let mut total_written = 0;
+    let mut sector_buf = [0; SECTOR_SIZE];
+    let mut remaining = core::cmp::min(buf.len(), file_size - file.offset);
+
+    while remaining > 0 {
+        let logical_block = file.offset / BLOCK_SIZE;
+        if logical_block >= file.inode.direct_blocks.len() {
+            return if total_written > 0 {
+                Ok(total_written)
+            } else {
+                Err(())
+            };
+        }
+
+        let block = file.inode.direct_blocks[logical_block];
+        if block == 0 {
+            return if total_written > 0 {
+                Ok(total_written)
+            } else {
+                Err(())
+            };
+        }
+
+        let block_offset = file.offset % BLOCK_SIZE;
+        let sector_in_block = block_offset / SECTOR_SIZE;
+        let sector_offset = block_offset % SECTOR_SIZE;
+        let sector = block as usize * SECTORS_PER_BLOCK + sector_in_block;
+
+        let writable_to_sector = SECTOR_SIZE - sector_offset;
+        let to_copy = core::cmp::min(writable_to_sector, remaining);
+
+        if to_copy != SECTOR_SIZE {
+            if unsafe { virtio::block::read(&mut sector_buf, sector as u64) }
+                != block::VirtioBlkStatus::Ok as u8
+            {
+                return Err(());
+            }
+        }
+
+        sector_buf[sector_offset..sector_offset + to_copy]
+            .copy_from_slice(&buf[total_written..total_written + to_copy]);
+
+        if unsafe { virtio::block::write(&sector_buf, sector as u64) }
+            != block::VirtioBlkStatus::Ok as u8
+        {
+            return Err(());
+        }
+
+        file.offset += to_copy;
+        total_written += to_copy;
+        remaining -= to_copy;
+    }
+
+    Ok(total_written)
+}
+
+pub enum SeekFrom {
+    Start(usize),
+    Current(isize),
+    End(isize),
+}
+
+pub fn seek(file: &mut File, pos: SeekFrom) -> Result<usize, ()> {
+    if file.inode.ty != Type::File {
+        return Err(());
+    }
+
+    let file_size = file.inode.metadata.sz as usize;
+    let new_offset = match pos {
+        SeekFrom::Start(offset) => Some(offset),
+        SeekFrom::Current(offset) => checked_offset(file.offset, offset),
+        SeekFrom::End(offset) => checked_offset(file_size, offset),
+    }
+    .ok_or(())?;
+
+    if new_offset > file_size {
+        return Err(());
+    }
+
+    file.offset = new_offset;
+    Ok(file.offset)
+}
+
+fn checked_offset(base: usize, offset: isize) -> Option<usize> {
+    if offset >= 0 {
+        base.checked_add(offset as usize)
+    } else {
+        base.checked_sub(offset.unsigned_abs())
+    }
+}
+
 fn get_inode(inum: usize) -> INode {
     let sb = SUPERBLOCK.0.get().unwrap();
 
@@ -76,28 +242,6 @@ fn get_inode(inum: usize) -> INode {
 
     unsafe { (*(buf[inode_offset..].as_ptr() as *const _ as *const INode)).clone() }
 }
-
-/*
-
-for (block_idx, block) in direct_blocks:
-    sector = block * 4096 / 512;
-
-    for sector_idx in 0..8 {
-        buf = virtio::read(sector); /* contains n dirents */
-
-        for cur_dir_idx in 0..MAX_DIRENTS_IN_SECTOR {
-
-            if block_idx * 8 + (sector_idx * MAX_DIRENTS_IN_SECTOR) + cur_dir_idx > n_dirent_in_inode {
-                // we reached the max
-                break;
-            }
-        }
-
-
-        sector += 512;
-    }
-
-*/
 
 /// Lookup the `path` inside `inode`. `inode` needs to be a directory.
 fn lookup_path(inode: &INode, path: &[u8]) -> Result<INode, ()> {
