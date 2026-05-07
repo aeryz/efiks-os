@@ -1,15 +1,9 @@
 [package]
-name = "vsfs"
+name = "vfs"
 version = "0.1.0"
 license.workspace = true
 edition.workspace = true
 
 [dependencies]
 bitflags = { workspace = true }
-vfs = { workspace = true }
 ksync = { workspace = true }
-derivative = { version = "2.2.0", features = ["use_core"] }
-
-[[bin]]
-name = "tool"
-path = "src/bin/vsfs-tool.rs"
