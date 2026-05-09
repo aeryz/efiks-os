@@ -1,6 +1,6 @@
 #![no_std]
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, ptr};
 
 use alloc::{
     collections::btree_map::{BTreeMap, Entry},
@@ -8,18 +8,18 @@ use alloc::{
 };
 use derivative::Derivative;
 use ksync::{ReadLockGuard, RwLock, SpinLock};
-use vfs::{BlockDevice, File, Filesystem, VNode, VfsError, VfsResult};
+use vfs::{BlockDevice, File, Filesystem, SECTOR_SIZE, VNode, VfsError, VfsResult};
 
 extern crate alloc;
 
-mod lib2;
-
 const MAGIC: u32 = 0x5653_4653; // "VSFS"
 const MAX_DIRENTS_IN_SECTOR: usize = 512 / size_of::<DirEnt>();
+const BLOCK_SIZE: usize = 4096;
+const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
 
 pub struct Vsfs<BD: BlockDevice> {
     superblock: SuperBlock,
-    inode_cache: BTreeMap<usize, INode<BD>>,
+    inode_cache: BTreeMap<usize, Arc<INode<BD>>>,
     _marker: PhantomData<BD>,
 }
 
@@ -34,7 +34,7 @@ pub struct INode<BD: BlockDevice> {
     _marker: PhantomData<BD>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct INodeInner {
     pub ty: Type,
@@ -51,7 +51,7 @@ pub enum Type {
     File = 2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Metadata {
     /// ID of the device containing file
@@ -74,9 +74,9 @@ impl<BD: BlockDevice> INode<BD> {
         fs: &Arc<SpinLock<Vsfs<BD>>>,
         inode: ReadLockGuard<'_, INodeInner>,
         path: &[u8],
-    ) -> VfsResult<Self> {
+    ) -> VfsResult<Arc<Self>> {
         if inode.ty != Type::Directory {
-            return Err(vfs::VfsError::Fs);
+            return Err(VfsError::Fs);
         }
 
         let n_dirent_in_node = inode.metadata.sz as usize / size_of::<DirEnt>();
@@ -92,17 +92,20 @@ impl<BD: BlockDevice> INode<BD> {
                     if (block_idx * 8 + sector_idx) * MAX_DIRENTS_IN_SECTOR + cur_dir_idx
                         >= n_dirent_in_node
                     {
-                        return Err(vfs::VfsError::Fs);
+                        return Err(VfsError::Fs);
                     }
 
                     let dirent = unsafe {
-                        (buf[(size_of::<DirEnt>() * cur_dir_idx)..].as_ptr() as *const _
-                            as *const DirEnt)
-                            .as_ref()
-                            .unwrap()
+                        ptr::read_unaligned(
+                            buf[(size_of::<DirEnt>() * cur_dir_idx)..].as_ptr() as *const DirEnt,
+                        )
                     };
+                    let name_len = dirent.name_len as usize;
+                    if name_len > dirent.name.len() {
+                        return Err(VfsError::Fs);
+                    }
 
-                    if &dirent.name[0..dirent.name_len as usize] == path {
+                    if &dirent.name[0..name_len] == path {
                         return Ok(Vsfs::<BD>::read_inode(fs.clone(), dirent.inum as usize)?);
                     }
                 }
@@ -111,17 +114,17 @@ impl<BD: BlockDevice> INode<BD> {
             }
         }
 
-        Err(vfs::VfsError::Fs)
+        Err(VfsError::Fs)
     }
 }
 
-impl<BD: BlockDevice> VNode for INode<BD> {
-    fn open(&self, path: &[u8]) -> VfsResult<File<Self>> {
-        let mut current = self.clone();
+impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
+    fn open(&self, path: &[u8]) -> VfsResult<File> {
+        let mut current = Arc::new(self.clone());
         for path in path.split(|b| *b == b'/').filter(|p| !p.is_empty()) {
             let inode = current.inner.read_lock();
             if inode.ty == Type::File {
-                return Err(vfs::VfsError::Fs);
+                return Err(VfsError::Fs);
             }
             let next_inode = Self::lookup_path(&self.fs, inode, path)?;
 
@@ -131,9 +134,63 @@ impl<BD: BlockDevice> VNode for INode<BD> {
         }
 
         Ok(File {
-            inode: Arc::new(current),
+            inode: current,
             offset: 0,
         })
+    }
+
+    fn read(&self, mut offset: usize, buf: &mut [u8]) -> VfsResult<usize> {
+        let inner = self.inner.read_lock();
+        if inner.ty != Type::File {
+            return Err(VfsError::Fs);
+        }
+
+        let file_size = inner.metadata.sz as usize;
+        if offset >= file_size || buf.is_empty() {
+            return Ok(0);
+        }
+
+        let mut total_read = 0;
+        let mut sector_buf = [0; SECTOR_SIZE];
+        let mut remaining = core::cmp::min(buf.len(), file_size - offset);
+
+        while remaining > 0 {
+            let logical_block = offset / BLOCK_SIZE;
+            if logical_block >= inner.direct_blocks.len() {
+                return if total_read > 0 {
+                    Ok(total_read)
+                } else {
+                    Err(VfsError::Fs)
+                };
+            }
+
+            let block = inner.direct_blocks[logical_block];
+            if block == 0 {
+                return if total_read > 0 {
+                    Ok(total_read)
+                } else {
+                    Err(VfsError::Fs)
+                };
+            }
+
+            let block_offset = offset % BLOCK_SIZE;
+            let sector_in_block = block_offset / SECTOR_SIZE;
+            let sector_offset = block_offset % SECTOR_SIZE;
+            let sector = block as usize * SECTORS_PER_BLOCK + sector_in_block;
+
+            BD::read_sector(sector, &mut sector_buf)?;
+
+            let readable_from_sector = SECTOR_SIZE - sector_offset;
+            let to_copy = core::cmp::min(readable_from_sector, remaining);
+            buf[total_read..total_read + to_copy]
+                .copy_from_slice(&sector_buf[sector_offset..sector_offset + to_copy]);
+
+            offset += to_copy;
+            total_read += to_copy;
+            remaining -= to_copy;
+        }
+
+        Ok(total_read)
     }
 }
 
@@ -150,38 +207,30 @@ struct SuperBlock {
     data_block_start: u32,
 }
 
-impl<BD: BlockDevice> Filesystem for Vsfs<BD> {
-    type VNode = INode<BD>;
+pub fn initialize<BD: BlockDevice>() -> VfsResult<Arc<SpinLock<Vsfs<BD>>>> {
+    let buf = &mut [0; 512];
+    BD::read_sector(0, buf)?;
 
-    fn initialize() -> VfsResult<Arc<SpinLock<Self>>> {
-        let buf = &mut [0; 512];
-        BD::read_sector(0, buf)?;
+    let sb = unsafe { ptr::read_unaligned(buf.as_ptr() as *const SuperBlock) };
 
-        let sb = unsafe {
-            (buf.as_ptr() as *const _ as *const SuperBlock)
-                .as_ref()
-                .ok_or(VfsError::Fs)?
-        };
-
-        if sb.magic != MAGIC {
-            return Err(VfsError::Fs);
-        }
-
-        let vsfs = Arc::new(SpinLock::new(Self {
-            superblock: *sb,
-            inode_cache: BTreeMap::new(),
-            _marker: PhantomData,
-        }));
-
-        let root_inode = Vsfs::<BD>::read_inode(vsfs.clone(), 1)?;
-        let _ = vsfs.lock().inode_cache.insert(1, root_inode);
-
-        Ok(vsfs)
+    if sb.magic != MAGIC {
+        return Err(VfsError::Fs);
     }
 
-    fn root(fs: Arc<SpinLock<Self>>) -> VfsResult<INode<BD>> {
-        Ok(fs
-            .lock()
+    let vsfs = Arc::new(SpinLock::new(Vsfs {
+        superblock: sb,
+        inode_cache: BTreeMap::new(),
+        _marker: PhantomData,
+    }));
+
+    let root_inode = Vsfs::<BD>::read_inode(vsfs.clone(), 1)?;
+    let _ = vsfs.lock().inode_cache.insert(1, root_inode);
+
+    Ok(vsfs)
+}
+impl<BD: BlockDevice + 'static + Send + Sync> Filesystem for Vsfs<BD> {
+    fn root(&self) -> VfsResult<Arc<dyn VNode>> {
+        Ok(self
             .inode_cache
             .get(&1)
             .expect("root inode always exists")
@@ -190,12 +239,12 @@ impl<BD: BlockDevice> Filesystem for Vsfs<BD> {
 }
 
 impl<BD: BlockDevice> Vsfs<BD> {
-    fn read_inode(fs: Arc<SpinLock<Self>>, inum: usize) -> VfsResult<INode<BD>> {
+    fn read_inode(fs: Arc<SpinLock<Self>>, inum: usize) -> VfsResult<Arc<INode<BD>>> {
         let mut fs_ = fs.lock();
         let inode_table_start = fs_.superblock.inode_table_start;
         match fs_.inode_cache.entry(inum) {
             Entry::Vacant(inode) => {
-                let i = INode {
+                let i = Arc::new(INode {
                     inum,
                     fs: fs.clone(),
                     inner: Arc::new(RwLock::new(Self::read_inode_from_block(
@@ -203,7 +252,7 @@ impl<BD: BlockDevice> Vsfs<BD> {
                         inum,
                     )?)),
                     _marker: PhantomData,
-                };
+                });
                 inode.insert_entry(i.clone());
                 Ok(i)
             }
@@ -220,8 +269,9 @@ impl<BD: BlockDevice> Vsfs<BD> {
 
         BD::read_sector(inode_sector, buf)?;
 
-        let inner =
-            unsafe { (*(buf[inode_offset..].as_ptr() as *const _ as *const INodeInner)).clone() };
+        let inner = unsafe {
+            ptr::read_unaligned(buf[inode_offset..].as_ptr() as *const INodeInner)
+        };
 
         Ok(inner)
     }

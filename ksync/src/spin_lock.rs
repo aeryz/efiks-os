@@ -25,7 +25,9 @@ impl<T> SpinLock<T> {
             data: UnsafeCell::new(data),
         }
     }
+}
 
+impl<T: ?Sized> SpinLock<T> {
     pub fn lock<'a>(&'a self) -> SpinLockGuard<'a, T> {
         while !self
             .flag

@@ -18,6 +18,8 @@ use crate::{
     mm,
 };
 
+use vfs::{BlockDevice, VfsError, VfsResult};
+
 use super::Status;
 
 const QUEUE_SIZE: usize = 16;
@@ -33,6 +35,30 @@ static DRIVER: SpinLock<VirtioBlkDriver> = SpinLock::new(VirtioBlkDriver {
 
 unsafe impl Sync for VirtioBlkDriver {}
 unsafe impl Send for VirtioBlkDriver {}
+
+pub struct VirtioBlkDevice;
+
+impl BlockDevice for VirtioBlkDriver {
+    fn read_sector(sector: usize, buf: &mut [u8; vfs::SECTOR_SIZE]) -> VfsResult<()> {
+        let status = unsafe { read(buf, sector as u64) };
+
+        if status == VirtioBlkStatus::Ok as u8 {
+            Ok(())
+        } else {
+            Err(VfsError::DeviceIO)
+        }
+    }
+
+    fn write_sector(sector: usize, buf: &[u8; vfs::SECTOR_SIZE]) -> VfsResult<()> {
+        let status = unsafe { write(buf, sector as u64) };
+
+        if status == VirtioBlkStatus::Ok as u8 {
+            Ok(())
+        } else {
+            Err(VfsError::DeviceIO)
+        }
+    }
+}
 
 #[repr(C)]
 pub struct VirtioBlkDriver {

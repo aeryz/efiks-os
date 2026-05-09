@@ -10,6 +10,7 @@ riscv = { workspace = true }
 ksync = { workspace = true }
 log = "0.4.29"
 kmalloc = { workspace = true }
+vfs = { workspace = true }
 vsfs = { workspace = true }
 
 [build-dependencies]

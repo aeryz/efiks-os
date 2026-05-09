@@ -25,7 +25,10 @@ use ksync::SpinLock;
 
 use crate::{
     arch::{Architecture, mmu::VirtualAddress},
-    driver::{uart, virtio},
+    driver::{
+        uart,
+        virtio::{self, block::VirtioBlkDriver},
+    },
 };
 
 core::arch::global_asm!(include_str!("start.s"));
@@ -45,34 +48,26 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
         Err(_) => log::error!("driver initialization failed"),
     }
 
-    vfs::init();
+    vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs).expect("filesystem can be mount");
 
     let mut file = vfs::open(b"/foo/bar").unwrap();
-    log::info!("file: {:?}", file.inode);
+    log::info!("file: {:?}", file.offset);
 
-    for _ in 0..4 {
-        let mut buf = [0; 4];
-        let n_read = vfs::read(&mut file, &mut buf).unwrap();
+    let mut buf = [0; 10];
+    let n_bytes = file.read(&mut buf).unwrap();
+    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
+        str::from_utf8_unchecked(&buf[0..n_bytes])
+    });
 
-        unsafe {
-            log::info!("{:?}", str::from_utf8_unchecked(&buf[0..n_read]));
-        }
-    }
+    let n_bytes = file.read(&mut buf).unwrap();
+    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
+        str::from_utf8_unchecked(&buf[0..n_bytes])
+    });
 
-    vfs::seek(&mut file, vfs::SeekFrom::Start(0)).unwrap();
-
-    vfs::write(&mut file, b"amazing").unwrap();
-
-    vfs::seek(&mut file, vfs::SeekFrom::Start(0)).unwrap();
-
-    for _ in 0..4 {
-        let mut buf = [0; 4];
-        let n_read = vfs::read(&mut file, &mut buf).unwrap();
-
-        unsafe {
-            log::info!("{:?}", str::from_utf8_unchecked(&buf[0..n_read]));
-        }
-    }
+    let n_bytes = file.read(&mut buf).unwrap();
+    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
+        str::from_utf8_unchecked(&buf[0..n_bytes])
+    });
 
     panic!("");
 

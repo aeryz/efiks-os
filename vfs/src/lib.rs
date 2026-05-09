@@ -1,10 +1,6 @@
 #![no_std]
 
-mod lib2;
-
 use alloc::sync::Arc;
-use bitflags::bitflags;
-use ksync::{RwLock, SpinLock};
 
 extern crate alloc;
 
@@ -13,31 +9,28 @@ pub const SECTOR_SIZE: usize = 512;
 
 pub type VfsResult<T> = Result<T, VfsError>;
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum VfsError {
     DeviceIO,
     Fs,
+    AlreadyMounted,
+    Unknown,
 }
 
-///
-pub trait VNode: Sized {
-    fn open(&self, path: &[u8]) -> VfsResult<File<Self>>;
+pub trait VNode: Send + Sync {
+    /// Opens a file at `path` relative to the `self` inode. Meaning,
+    /// if one has the inode for `/path/to/folder`, opening `file/path` will
+    /// open the file at `/path/to/folder/file/path`.
+    fn open(&self, path: &[u8]) -> VfsResult<File>;
+
+    /// Reads at most `buf.len()` bytes from this inode starting from the offset
+    /// and returns the number of bytes read.
+    fn read(&self, offset: usize, buf: &mut [u8]) -> VfsResult<usize>;
 }
 
-pub trait Filesystem: Sized {
-    type VNode: VNode;
-
-    /// Initializes the filesystem to be mounted at '/'.
-    /// Similar to how mount works in Linux but we prefer to use a
-    /// different naming at this time not to confuse the reader into
-    /// thinking we support multiple mount points or you can mount into
-    /// a path other than '/'.
-    ///
-    /// Constructs and returns the self to be used by the OS.
-    /// Returns `VfsError::FsInitError` on initialization error.
-    fn initialize() -> VfsResult<Arc<SpinLock<Self>>>;
-
+pub trait Filesystem: Send + Sync {
     /// Returns the root inode
-    fn root(fs: Arc<SpinLock<Self>>) -> VfsResult<Self::VNode>;
+    fn root(&self) -> VfsResult<Arc<dyn VNode>>;
 }
 
 pub trait BlockDevice {
@@ -52,7 +45,15 @@ pub trait BlockDevice {
     fn write_sector(sector: usize, buf: &[u8; SECTOR_SIZE]) -> VfsResult<()>;
 }
 
-pub struct File<N: VNode> {
-    pub inode: Arc<N>,
+pub struct File {
+    pub inode: Arc<dyn VNode>,
     pub offset: usize,
+}
+
+impl File {
+    pub fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
+        let n_read = self.inode.read(self.offset, buf)?;
+        self.offset += n_read;
+        Ok(n_read)
+    }
 }

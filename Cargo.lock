@@ -66,6 +66,7 @@ dependencies = [
  "ksync",
  "log",
  "riscv",
+ "vfs",
  "vsfs",
 ]
 
