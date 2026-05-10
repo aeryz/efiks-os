@@ -26,6 +26,10 @@ pub trait VNode: Send + Sync {
     /// Reads at most `buf.len()` bytes from this inode starting from the offset
     /// and returns the number of bytes read.
     fn read(&self, offset: usize, buf: &mut [u8]) -> VfsResult<usize>;
+
+    /// Writes at most `buf.len()` bytes into this inode starting from the
+    /// `offset` and returns the number of bytes written.
+    fn write(&self, offset: usize, buf: &[u8]) -> VfsResult<usize>;
 }
 
 pub trait Filesystem: Send + Sync {
@@ -50,10 +54,17 @@ pub struct File {
     pub offset: usize,
 }
 
+// TODO(aeryz): There is no caching layer right now
 impl File {
     pub fn read(&mut self, buf: &mut [u8]) -> VfsResult<usize> {
         let n_read = self.inode.read(self.offset, buf)?;
         self.offset += n_read;
         Ok(n_read)
+    }
+
+    pub fn write(&mut self, buf: &[u8]) -> VfsResult<usize> {
+        let n_written = self.inode.write(self.offset, buf)?;
+        self.offset += n_written;
+        Ok(n_written)
     }
 }

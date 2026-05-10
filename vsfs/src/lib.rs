@@ -97,7 +97,7 @@ impl<BD: BlockDevice> INode<BD> {
 
                     let dirent = unsafe {
                         ptr::read_unaligned(
-                            buf[(size_of::<DirEnt>() * cur_dir_idx)..].as_ptr() as *const DirEnt,
+                            buf[(size_of::<DirEnt>() * cur_dir_idx)..].as_ptr() as *const DirEnt
                         )
                     };
                     let name_len = dirent.name_len as usize;
@@ -192,6 +192,64 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
 
         Ok(total_read)
     }
+
+    fn write(&self, mut offset: usize, buf: &[u8]) -> VfsResult<usize> {
+        let inner = self.inner.write_lock();
+        if inner.ty != Type::File {
+            return Err(VfsError::Fs);
+        }
+
+        let file_size = inner.metadata.sz as usize;
+        if offset >= file_size || buf.is_empty() {
+            return Ok(0);
+        }
+
+        let mut total_written = 0;
+        let mut sector_buf = [0; SECTOR_SIZE];
+        let mut remaining = core::cmp::min(buf.len(), file_size - offset);
+
+        while remaining > 0 {
+            let logical_block = offset / BLOCK_SIZE;
+            if logical_block >= inner.direct_blocks.len() {
+                return if total_written > 0 {
+                    Ok(total_written)
+                } else {
+                    Err(VfsError::Fs)
+                };
+            }
+
+            let block = inner.direct_blocks[logical_block];
+            if block == 0 {
+                return if total_written > 0 {
+                    Ok(total_written)
+                } else {
+                    Err(VfsError::Fs)
+                };
+            }
+
+            let block_offset = offset % BLOCK_SIZE;
+            let sector_in_block = block_offset / SECTOR_SIZE;
+            let sector_offset = block_offset % SECTOR_SIZE;
+            let sector = block as usize * SECTORS_PER_BLOCK + sector_in_block;
+
+            let writable_to_sector = SECTOR_SIZE - sector_offset;
+            let to_copy = core::cmp::min(writable_to_sector, remaining);
+
+            if to_copy != SECTOR_SIZE {
+                BD::read_sector(sector, &mut sector_buf)?;
+            }
+
+            sector_buf[sector_offset..sector_offset + to_copy]
+                .copy_from_slice(&buf[total_written..total_written + to_copy]);
+
+            BD::write_sector(sector, &sector_buf)?;
+
+            offset += to_copy;
+            total_written += to_copy;
+            remaining -= to_copy;
+        }
+        Ok(total_written)
+    }
 }
 
 #[repr(C)]
@@ -269,9 +327,8 @@ impl<BD: BlockDevice> Vsfs<BD> {
 
         BD::read_sector(inode_sector, buf)?;
 
-        let inner = unsafe {
-            ptr::read_unaligned(buf[inode_offset..].as_ptr() as *const INodeInner)
-        };
+        let inner =
+            unsafe { ptr::read_unaligned(buf[inode_offset..].as_ptr() as *const INodeInner) };
 
         Ok(inner)
     }
