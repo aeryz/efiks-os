@@ -153,7 +153,7 @@ impl File {
         }
         .ok_or(VfsError::OutOfBounds)?;
 
-        if new_offset >= self.inode.sz() {
+        if new_offset > self.inode.sz() {
             return Err(VfsError::OutOfBounds);
         }
 

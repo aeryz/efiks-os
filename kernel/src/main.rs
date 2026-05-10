@@ -43,10 +43,8 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
     let blk_device_base = virtio::find_virtio_blk().expect("virtio must exist");
     log::info!("Found VirtIO device at address: {blk_device_base:x}");
 
-    match virtio::block::init(blk_device_base) {
-        Ok(_) => log::info!("driver initialized"),
-        Err(_) => log::error!("driver initialization failed"),
-    }
+    virtio::block::init(blk_device_base).expect("driver must be initialized");
+    log::info!("VirtIO driver is initialized");
 
     vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs)
         .expect("The filesystem should be able to be mounted at root");

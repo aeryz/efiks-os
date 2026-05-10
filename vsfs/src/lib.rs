@@ -387,6 +387,7 @@ impl<BD: BlockDevice> Vsfs<BD> {
 
         match cache.entry(inum) {
             Entry::Vacant(_) => {
+                // Dropping the lock to unblock the cache while doing physical IO
                 drop(cache);
                 let i = Arc::new(INode {
                     inum,
@@ -397,8 +398,17 @@ impl<BD: BlockDevice> Vsfs<BD> {
                     )?)),
                     _marker: PhantomData,
                 });
-                let _ = fs.inode_cache.lock().insert(inum, i.clone());
-                Ok(i)
+                // Again checking the existence of the value so that we only insert once in case
+                // there are multiple threads here racing to add the same thing. If we were to
+                // blindly `insert` here, we would have inserted twice and it would break the
+                // rule of "1 reference counting per inode".
+                match fs.inode_cache.lock().entry(inum) {
+                    Entry::Vacant(inode) => {
+                        inode.insert(i.clone());
+                        Ok(i)
+                    }
+                    Entry::Occupied(inode) => Ok(inode.get().clone()),
+                }
             }
             Entry::Occupied(occupied_entry) => Ok(occupied_entry.get().clone()),
         }
