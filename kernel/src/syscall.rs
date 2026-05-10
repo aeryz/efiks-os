@@ -34,7 +34,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                     .unwrap()
             };
 
-            log::info!(
+            log::trace!(
                 "this syscall is called by {} with buf: {:?}",
                 this_ctx.core_id,
                 buf

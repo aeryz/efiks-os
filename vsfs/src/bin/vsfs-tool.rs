@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};
 
-use vsfs::{DirEnt, INode, Metadata, SuperBlock, Type};
+use vsfs::{DirEnt, INodeInner, Metadata, Type};
 
 const BLOCK_SIZE: usize = 4096;
 const NBLOCKS: u32 = 64;
@@ -23,6 +23,19 @@ const FOO_DATA_BLOCK: u32 = 9;
 const BAR_DATA_BLOCK: u32 = 10;
 
 const VSFS_MAGIC: u32 = 0x5653_4653; // "VSFS"
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SuperBlock {
+    magic: u32,
+    nblocks: u32,
+    ninodes: u32,
+    inode_bitmap_block: u32,
+    data_bitmap_block: u32,
+    inode_table_start: u32,
+    inode_table_blocks: u32,
+    data_block_start: u32,
+}
 
 fn main() -> io::Result<()> {
     let mut img = File::create("vsfs.img")?;
@@ -66,7 +79,7 @@ fn write_struct<T>(img: &mut File, offset: u64, val: &T) -> io::Result<()> {
 }
 
 fn inode_offset(inum: u32) -> u64 {
-    let inode_size = std::mem::size_of::<INode>() as u64;
+    let inode_size = std::mem::size_of::<INodeInner>() as u64;
 
     block_offset(INODE_TABLE_START) + inum as u64 * inode_size
 }
@@ -117,7 +130,7 @@ fn write_root_inode(img: &mut File) -> io::Result<()> {
     let mut direct_blocks = [0u32; 12];
     direct_blocks[0] = ROOT_DATA_BLOCK;
 
-    let inode = INode {
+    let inode = INodeInner {
         ty: Type::Directory,
         link_count: 1,
         metadata: Metadata {
@@ -152,7 +165,7 @@ fn write_foo_inode(img: &mut File) -> io::Result<()> {
     let mut direct_blocks = [0u32; 12];
     direct_blocks[0] = FOO_DATA_BLOCK;
 
-    let inode = INode {
+    let inode = INodeInner {
         ty: Type::Directory,
         link_count: 1,
         metadata: Metadata {
@@ -189,7 +202,7 @@ fn write_bar_file(img: &mut File) -> io::Result<()> {
     let mut direct_blocks = [0u32; 12];
     direct_blocks[0] = BAR_DATA_BLOCK;
 
-    let inode = INode {
+    let inode = INodeInner {
         ty: Type::File,
         link_count: 1,
         metadata: Metadata {

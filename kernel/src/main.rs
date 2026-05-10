@@ -19,7 +19,6 @@ mod task;
 mod userspace;
 mod vfs;
 
-use ::vfs::SeekFrom;
 use alloc::vec::Vec;
 pub use debug::*;
 use ksync::SpinLock;
@@ -41,44 +40,16 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     task::init();
 
-    let blk_device_base = virtio::find_virtio_blk().unwrap();
-    log::info!("Found device id: {blk_device_base:x}");
+    let blk_device_base = virtio::find_virtio_blk().expect("virtio must exist");
+    log::info!("Found VirtIO device at address: {blk_device_base:x}");
 
     match virtio::block::init(blk_device_base) {
         Ok(_) => log::info!("driver initialized"),
         Err(_) => log::error!("driver initialization failed"),
     }
 
-    vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs).expect("filesystem can be mount");
-
-    let mut file = vfs::open(b"/foo/bar").unwrap();
-    log::info!("file: {:?}", file.offset);
-
-    let mut buf = [0; 10];
-    let n_bytes = file.read(&mut buf).unwrap();
-    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
-        str::from_utf8_unchecked(&buf[0..n_bytes])
-    });
-
-    let n_bytes = file.read(&mut buf).unwrap();
-    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
-        str::from_utf8_unchecked(&buf[0..n_bytes])
-    });
-
-    let n_bytes = file.read(&mut buf).unwrap();
-    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
-        str::from_utf8_unchecked(&buf[0..n_bytes])
-    });
-
-    file.seek(SeekFrom::Start(3)).unwrap();
-    file.write(b"AA").unwrap();
-    file.seek(SeekFrom::Start(0)).unwrap();
-    let n_bytes = file.read(&mut buf).unwrap();
-    log::info!("read {n_bytes} bytes, value is: {}", unsafe {
-        str::from_utf8_unchecked(&buf[0..n_bytes])
-    });
-
-    panic!("");
+    vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs)
+        .expect("The filesystem should be able to be mounted at root");
 
     let mut core_ctxs = Vec::new();
 

@@ -10,6 +10,10 @@ vfs = { workspace = true }
 ksync = { workspace = true }
 derivative = { version = "2.2.0", features = ["use_core"] }
 
+[features]
+host-tool = []
+
 [[bin]]
 name = "tool"
 path = "src/bin/vsfs-tool.rs"
+required-features = ["host-tool"]

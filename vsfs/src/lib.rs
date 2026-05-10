@@ -1,3 +1,17 @@
+//! Very Simple File System implementation.
+//!
+//! VSFS is the first concrete filesystem used by the kernel VFS. It is small on
+//! purpose: a superblock identifies the filesystem layout, an inode table
+//! stores fixed-size inode records, and directories are files containing
+//! fixed-size directory entries.
+//!
+//! Synchronization is split by responsibility. The filesystem object owns a
+//! short-held inode cache lock, while each cached inode owns an [`RwLock`] for
+//! its mutable inode metadata. This lets independent inodes be accessed in
+//! parallel and keeps the VFS mount layer from serializing an entire
+//! filesystem. Raw sector caching is intentionally left below this crate; a
+//! cached block device can implement [`BlockDevice`] and be mounted under VSFS.
+
 #![no_std]
 
 use core::{marker::PhantomData, ptr};
@@ -17,14 +31,29 @@ const MAX_DIRENTS_IN_SECTOR: usize = 512 / size_of::<DirEnt>();
 const BLOCK_SIZE: usize = 4096;
 const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
 
+/// Mounted VSFS instance.
+///
+/// The superblock is immutable after mount. The inode cache maps VSFS inode
+/// numbers to shared in-memory inode objects; it is filesystem-specific because
+/// the VFS does not know how VSFS inode numbers map to on-disk metadata.
 pub struct Vsfs<BD: BlockDevice> {
     superblock: SuperBlock,
     inode_cache: SpinLock<BTreeMap<usize, Arc<INode<BD>>>>,
     _marker: PhantomData<BD>,
 }
 
+/// VSFS-specific error marker.
+///
+/// Currently the public API reports errors through [`VfsError`], so this type
+/// is reserved for a future split between generic VFS errors and detailed VSFS
+/// errors.
 pub enum Error {}
 
+/// Cached VSFS inode.
+///
+/// The inode number and owning filesystem are immutable. The on-disk inode
+/// payload lives behind an [`RwLock`] so multiple readers can inspect file
+/// metadata concurrently while writes take exclusive access.
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
 pub struct INode<BD: BlockDevice> {
@@ -34,23 +63,36 @@ pub struct INode<BD: BlockDevice> {
     _marker: PhantomData<BD>,
 }
 
+/// On-disk inode payload.
+///
+/// This structure is read directly from the inode table, so the representation
+/// must stay compatible with the image creation tool and existing disk images.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct INodeInner {
+    /// File kind.
     pub ty: Type,
+    /// Number of directory entries pointing at this inode.
     pub link_count: u16,
+    /// Basic file metadata.
     pub metadata: Metadata,
+    /// Direct data block numbers.
     pub direct_blocks: [u32; 12],
+    /// Indirect block number. Not used by the current implementation.
     pub indirect_block: u32,
 }
 
+/// VSFS inode type stored on disk.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u16)]
 pub enum Type {
+    /// Directory containing [`DirEnt`] records.
     Directory = 1,
+    /// Regular file.
     File = 2,
 }
 
+/// Basic inode metadata stored on disk.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Metadata {
@@ -61,15 +103,27 @@ pub struct Metadata {
     pub sz: u32,
 }
 
+/// Fixed-size directory entry stored in directory data blocks.
+///
+/// Names are byte strings, not UTF-8 strings. Only the first
+/// [`DirEnt::name_len`] bytes in [`DirEnt::name`] are part of the entry name.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct DirEnt {
+    /// Target inode number.
     pub inum: u32,
+    /// Number of valid bytes in [`DirEnt::name`].
     pub name_len: u8,
+    /// Inline file name storage.
     pub name: [u8; 27],
 }
 
 impl<BD: BlockDevice> INode<BD> {
+    /// Looks up one path component inside a directory inode.
+    ///
+    /// `path` must be a single component without `/`. The caller passes the
+    /// directory inode read guard so the directory metadata remains stable
+    /// while the directory entries are scanned.
     fn lookup_path(
         fs: &Arc<Vsfs<BD>>,
         inode: ReadLockGuard<'_, INodeInner>,
@@ -119,6 +173,10 @@ impl<BD: BlockDevice> INode<BD> {
 }
 
 impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
+    /// Resolves a relative path from this inode and returns an open file.
+    ///
+    /// Empty components are ignored, so repeated slashes behave like a single
+    /// separator. Opening through a regular file is rejected.
     fn open(&self, path: &[u8]) -> VfsResult<File> {
         let mut current = Arc::new(self.clone());
         for path in path.split(|b| *b == b'/').filter(|p| !p.is_empty()) {
@@ -139,6 +197,11 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
         })
     }
 
+    /// Reads bytes from a regular file.
+    ///
+    /// VSFS currently supports only direct blocks. Reading past the end returns
+    /// `Ok(0)`, while discovering malformed block metadata returns
+    /// [`VfsError::Fs`] unless some bytes have already been read.
     fn read(&self, mut offset: usize, buf: &mut [u8]) -> VfsResult<usize> {
         let inner = self.inner.read_lock();
         if inner.ty != Type::File {
@@ -193,6 +256,10 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
         Ok(total_read)
     }
 
+    /// Writes bytes to a regular file.
+    ///
+    /// This implementation writes only within the existing file size. It does
+    /// not allocate new blocks, grow files, or update timestamps.
     fn write(&self, mut offset: usize, buf: &[u8]) -> VfsResult<usize> {
         let inner = self.inner.write_lock();
         if inner.ty != Type::File {
@@ -251,11 +318,13 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
         Ok(total_written)
     }
 
+    /// Returns the current file size recorded in the inode.
     fn sz(&self) -> usize {
         self.inner.read_lock().metadata.sz as usize
     }
 }
 
+/// VSFS superblock stored at sector 0.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct SuperBlock {
@@ -269,6 +338,10 @@ struct SuperBlock {
     data_block_start: u32,
 }
 
+/// Mounts a VSFS image from the given block device type.
+///
+/// Initialization reads and validates the superblock, creates the filesystem
+/// object, and warms the inode cache with the root inode.
 pub fn initialize<BD: BlockDevice>() -> VfsResult<Arc<Vsfs<BD>>> {
     let buf = &mut [0; 512];
     BD::read_sector(0, buf)?;
@@ -290,7 +363,9 @@ pub fn initialize<BD: BlockDevice>() -> VfsResult<Arc<Vsfs<BD>>> {
 
     Ok(vsfs)
 }
+
 impl<BD: BlockDevice + 'static + Send + Sync> Filesystem for Vsfs<BD> {
+    /// Returns the cached root inode.
     fn root(&self) -> VfsResult<Arc<dyn VNode>> {
         Ok(self
             .inode_cache
@@ -302,6 +377,10 @@ impl<BD: BlockDevice + 'static + Send + Sync> Filesystem for Vsfs<BD> {
 }
 
 impl<BD: BlockDevice> Vsfs<BD> {
+    /// Returns a cached inode, reading it from disk on cache miss.
+    ///
+    /// The inode cache lock is not held while the disk is accessed. The cache
+    /// is checked first, then a missed inode is read and inserted.
     fn read_inode(fs: Arc<Self>, inum: usize) -> VfsResult<Arc<INode<BD>>> {
         let inode_table_start = fs.superblock.inode_table_start;
         let mut cache = fs.inode_cache.lock();
@@ -325,6 +404,7 @@ impl<BD: BlockDevice> Vsfs<BD> {
         }
     }
 
+    /// Reads one inode payload from the on-disk inode table.
     fn read_inode_from_block(inode_table_start: usize, inum: usize) -> VfsResult<INodeInner> {
         let inode_byte_offset = inode_table_start * 4096 + inum * size_of::<INodeInner>();
         let inode_sector = inode_byte_offset / 512;
