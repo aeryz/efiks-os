@@ -1,3 +1,14 @@
+//! Kernel-side VFS mount table.
+//!
+//! The shared `vfs` crate defines filesystem traits and open-file behavior.
+//! This module owns the kernel-global mount registry: it maps absolute mount
+//! paths to concrete filesystem instances and routes absolute `open` requests
+//! to the filesystem with the longest matching mount prefix.
+//!
+//! The mount table has one short-held lock. Mounted filesystem objects are
+//! stored as `Arc<dyn Filesystem>` and are expected to synchronize their own
+//! metadata internally.
+
 use alloc::{
     collections::btree_map::{BTreeMap, Entry},
     sync::Arc,
@@ -14,10 +25,16 @@ struct FileSystems {
     file_systems: SpinLock<BTreeMap<Vec<u8>, Arc<dyn Filesystem>>>,
 }
 
+/// Filesystem implementations the kernel knows how to mount.
 pub enum SupportedFs {
+    /// Very Simple File System.
     Vsfs,
 }
 
+/// Mounts a filesystem at an absolute path.
+///
+/// The block device type is passed to the concrete filesystem initializer. The
+/// mount fails if another filesystem is already mounted at the same path.
 pub fn mount<BD: BlockDevice + 'static + Send + Sync>(
     path: &[u8],
     fs_type: SupportedFs,
@@ -37,6 +54,10 @@ pub fn mount<BD: BlockDevice + 'static + Send + Sync>(
     Ok(())
 }
 
+/// Opens an absolute path through the mounted filesystem tree.
+///
+/// The mount with the longest matching path prefix handles the request. The
+/// path passed to the filesystem root is relative to that mount point.
 pub fn open(path: &[u8]) -> VfsResult<File> {
     let mounts = FILE_SYSTEMS.file_systems.lock();
     let (mount_path, fs) = find_mount(&mounts, path).ok_or(VfsError::Fs)?;

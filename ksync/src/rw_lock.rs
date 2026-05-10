@@ -25,7 +25,9 @@ impl<T> RwLock<T> {
             data: UnsafeCell::new(data),
         }
     }
+}
 
+impl<T: ?Sized> RwLock<T> {
     pub fn read_lock<'a>(&'a self) -> ReadLockGuard<'a, T> {
         loop {
             let readers = self.readers.load(Ordering::Acquire);
