@@ -12,6 +12,7 @@ log = "0.4.29"
 kmalloc = { workspace = true }
 vfs = { workspace = true }
 vsfs = { workspace = true }
+elf = { version = "0.8.0", default-features = false, features = ["alloc"] }
 
 [build-dependencies]
 cc = "1"

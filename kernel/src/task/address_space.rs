@@ -17,10 +17,6 @@ pub struct VmRegion {
     pub start: VirtualAddressOf<Arch>,
     /// End address of this region
     pub end: VirtualAddressOf<Arch>,
-    // TODO(aeryz): temporary field that let's us tell whether the process own this address space or not.
-    // Since we don't have a filesystem right now, the userspace programs live under the kernel binary and
-    // for that reason, we cannot free the `text` section after exit.
-    pub process_owned: bool,
 }
 
 #[derive(Clone)]

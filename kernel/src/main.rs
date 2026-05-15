@@ -35,6 +35,7 @@ core::arch::global_asm!(include_str!("start.s"));
 
 #[unsafe(no_mangle)]
 extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
+    log::info!("again??? with {hartid} and 0x{dtb_address:x}");
     serial_log::init();
     log::info!("Kernel starts with hart_id: {hartid}, dtb: 0x{dtb_address:x}",);
 
@@ -49,12 +50,9 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
     vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs)
         .expect("The filesystem should be able to be mounted at root");
 
-    let mut file = vfs::open(b"/foo/bar").expect("Failed to open the file");
-    let mut buf = [0; 20];
-    let n_read = file.read(&mut buf).unwrap();
-    unsafe {
-        log::info!("{}", str::from_utf8_unchecked(&buf[0..n_read]));
-    }
+    task::spawn(b"/foo/sample_prog").unwrap();
+
+    panic!("finished");
 
     let mut core_ctxs = Vec::new();
 

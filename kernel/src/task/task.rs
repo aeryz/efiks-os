@@ -1,4 +1,7 @@
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
+
+use alloc::vec::Vec;
+use elf::endian::LittleEndian;
 
 use crate::{
     Arch,
@@ -58,6 +61,63 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
     })
 }
 
+pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
+    let mut exec = crate::vfs::open(path)?;
+    let fsize = exec.inode.sz();
+    let mut n_read = 0;
+
+    let mut buf = Vec::new();
+    buf.resize(exec.inode.sz(), 0);
+
+    while n_read < fsize {
+        n_read += exec.read(&mut buf)?;
+    }
+
+    let process_root_table_pa = mm::alloc_frame().unwrap();
+    let process_root_table_va =
+        VirtualAddress::from_raw(process_root_table_pa.raw() + KERNEL_DIRECT_MAPPING_BASE.raw())
+            .unwrap();
+    let process_root_table = process_root_table_va.as_ptr_mut();
+    unsafe { *process_root_table = PageTable::empty() };
+    let mut address_space = ADDRESS_SPACE_EMPTY;
+    address_space.root_pt = process_root_table_pa;
+
+    let elf_bytes = elf::ElfBytes::<LittleEndian>::minimal_parse(&buf).unwrap();
+    for seg in elf_bytes.segments().unwrap() {
+        if seg.p_type != elf::abi::PT_LOAD {
+            log::info!("other: {}", seg.p_type);
+            continue;
+        }
+        log::info!(
+            "Segment with the offset: {} and size {}, should be loaded at 0x{:x}.",
+            seg.p_offset,
+            seg.p_filesz,
+            seg.p_vaddr
+        );
+
+        let va = VirtualAddress::from_raw(seg.p_vaddr as usize).unwrap();
+        let pa = mm::alloc_frame().unwrap();
+
+        unsafe {
+            ptr::copy(
+                &buf[seg.p_offset as usize] as *const u8,
+                mm::phys_to_virt(pa.raw()) as *mut u8,
+                seg.p_filesz as usize,
+            );
+        }
+
+        unsafe {
+            (*process_root_table).map_vm(va, pa, convert_elf_flag_to_pte(seg.p_flags));
+            let _ = address_space.regions.push(VmRegion {
+                start: va,
+                end: VirtualAddress::from_raw(va.raw() + seg.p_filesz as usize).unwrap(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 pub fn create_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
     // we first initiate user's root page table
     let process_root_table_pa = mm::alloc_frame().unwrap();
@@ -89,7 +149,6 @@ pub fn create_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         let _ = address_space.regions.push(VmRegion {
             start: va,
             end: VirtualAddress::from_raw(va.raw() + 4096).unwrap(),
-            process_owned: false,
         });
     }
 
@@ -102,7 +161,6 @@ pub fn create_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         let _ = address_space.regions.push(VmRegion {
             start: va,
             end: VirtualAddress::from_raw(va.raw() + 4096).unwrap(),
-            process_owned: true,
         });
     }
 
@@ -115,7 +173,6 @@ pub fn create_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         let _ = address_space.regions.push(VmRegion {
             start: kernel_stack_va,
             end: VirtualAddress::from_raw(kernel_stack_va.raw() + 4096).unwrap(),
-            process_owned: true,
         });
 
         unsafe { (*process_root_table).map_vm(kernel_stack_va, kernel_stack, PteFlags::RW) };
@@ -158,4 +215,27 @@ pub fn create_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
     sched::enqueue_new_task(task_ptr);
 
     task_ptr
+}
+
+fn convert_elf_flag_to_pte(elf_flag: u32) -> PteFlags {
+    let mut flags = PteFlags::U;
+
+    log::info!("converting flags");
+
+    if (elf_flag & elf::abi::PF_R) != 0 {
+        log::info!("Read");
+        flags |= PteFlags::R;
+    }
+
+    if (elf_flag & elf::abi::PF_W) != 0 {
+        log::info!("Write");
+        flags |= PteFlags::W;
+    }
+
+    if (elf_flag & elf::abi::PF_X) != 0 {
+        log::info!("Exec");
+        flags |= PteFlags::X;
+    }
+
+    flags
 }
