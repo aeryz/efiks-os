@@ -49,6 +49,13 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
     vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs)
         .expect("The filesystem should be able to be mounted at root");
 
+    let mut file = vfs::open(b"/foo/bar").expect("Failed to open the file");
+    let mut buf = [0; 20];
+    let n_read = file.read(&mut buf).unwrap();
+    unsafe {
+        log::info!("{}", str::from_utf8_unchecked(&buf[0..n_read]));
+    }
+
     let mut core_ctxs = Vec::new();
 
     setup_core(0, &mut core_ctxs);

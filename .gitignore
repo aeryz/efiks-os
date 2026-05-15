@@ -11,3 +11,5 @@ target
 result
 
 *.img
+
+tmpfs/
