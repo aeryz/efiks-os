@@ -85,7 +85,6 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
     let elf_bytes = elf::ElfBytes::<LittleEndian>::minimal_parse(&buf).unwrap();
     for seg in elf_bytes.segments().unwrap() {
         if seg.p_type != elf::abi::PT_LOAD {
-            log::info!("other: {}", seg.p_type);
             continue;
         }
         log::info!(
@@ -107,6 +106,7 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
         }
 
         unsafe {
+            log::info!("mapping 0x{:x} to 0x{:x}", va.raw(), pa.raw());
             (*process_root_table).map_vm(va, pa, convert_elf_flag_to_pte(seg.p_flags));
             let _ = address_space.regions.push(VmRegion {
                 start: va,
@@ -114,6 +114,70 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
             });
         }
     }
+
+    // TODO(aeryz): these address space reserve stuff and the elf loading above
+    // overloads this function too much. These responsibilities needs to be
+    // separated.
+    for i in 0..4 {
+        let user_stack = mm::alloc_frame().unwrap();
+
+        let va = VirtualAddress::from_raw(0x0000_0000_3fff_0000 + 0x1000 * i).unwrap();
+        unsafe { (*process_root_table).map_vm(va, user_stack, PteFlags::RW | PteFlags::U) };
+        let _ = address_space.regions.push(VmRegion {
+            start: va,
+            end: VirtualAddress::from_raw(va.raw() + 4096).unwrap(),
+        });
+    }
+
+    let mut kernel_stack_bottom = PhysicalAddress::ZERO;
+    for _ in 0..4 {
+        // TODO(aeryz): With the following logic, we cannot guarantee a 16KB contiguous
+        // virtual memory. This is not acceptable.
+        let kernel_stack = mm::alloc_frame().unwrap();
+        let kernel_stack_va =
+            VirtualAddress::from_raw(mm::phys_to_virt(kernel_stack.raw())).unwrap();
+        let _ = address_space.regions.push(VmRegion {
+            start: kernel_stack_va,
+            end: VirtualAddress::from_raw(kernel_stack_va.raw() + 4096).unwrap(),
+        });
+        unsafe {
+            (*process_root_table).map_vm(kernel_stack_va, kernel_stack, PteFlags::RW);
+        }
+
+        kernel_stack_bottom = PhysicalAddress::from_raw(kernel_stack.raw() + 0xfa0).unwrap();
+    }
+
+    let kernel_stack_bottom = mm::phys_to_virt(kernel_stack_bottom.raw());
+
+    let trap_frame_ptr =
+        VirtualAddress::from_raw(kernel_stack_bottom - size_of::<TrapFrameOf<Arch>>()).unwrap();
+
+    unsafe {
+        *(trap_frame_ptr.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(
+            VirtualAddress::from_raw(elf_bytes.ehdr.e_entry as usize).unwrap(),
+            TASK_STACK_ADDRESS,
+        );
+    }
+
+    let context = ContextOf::<Arch>::initialize(
+        Arch::trap_resume_ptr(),
+        VirtualAddress::from_raw(kernel_stack_bottom - size_of::<TrapFrameOf<Arch>>()).unwrap(),
+    );
+
+    mm::kvm_full_map(unsafe { process_root_table.as_mut().unwrap() });
+
+    let task_ptr = task::add_task(Task {
+        pid: Pid::create_next(),
+        kernel_sp: VirtualAddress::from_raw(kernel_stack_bottom).expect("virtual address is valid"),
+        trap_frame: trap_frame_ptr.as_ptr_mut(),
+        context,
+        state: TaskState::Ready,
+        wake_up_at: 0,
+        exit_code: -1,
+        address_space,
+    });
+
+    sched::enqueue_new_task(task_ptr);
 
     Ok(())
 }
@@ -220,20 +284,15 @@ pub fn create_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
 fn convert_elf_flag_to_pte(elf_flag: u32) -> PteFlags {
     let mut flags = PteFlags::U;
 
-    log::info!("converting flags");
-
     if (elf_flag & elf::abi::PF_R) != 0 {
-        log::info!("Read");
         flags |= PteFlags::R;
     }
 
     if (elf_flag & elf::abi::PF_W) != 0 {
-        log::info!("Write");
         flags |= PteFlags::W;
     }
 
     if (elf_flag & elf::abi::PF_X) != 0 {
-        log::info!("Exec");
         flags |= PteFlags::X;
     }
 

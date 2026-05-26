@@ -32,14 +32,13 @@ extern "C" fn trap_handler(trap_frame: &mut TrapFrame) {
                     log::warn!("unhandled irq {irq_id}");
                 }
             }
-
-            log::info!("print happened");
         }
         TrapCause::TimerInterrupt => {
             sched::timer_interrupt();
         }
         TrapCause::Syscall => {
-            // This is a syscall, so we move the return program counter to just after the `ecall`
+            // This is a syscall, so we move the return program counter to just after the
+            // `ecall`
             trap_frame.sepc += 4;
             syscall::dispatch_syscall(trap_frame);
         }

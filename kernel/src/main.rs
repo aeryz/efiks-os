@@ -50,10 +50,6 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
     vfs::mount::<VirtioBlkDriver>(b"/", vfs::SupportedFs::Vsfs)
         .expect("The filesystem should be able to be mounted at root");
 
-    task::spawn(b"/foo/sample_prog").unwrap();
-
-    panic!("finished");
-
     let mut core_ctxs = Vec::new();
 
     setup_core(0, &mut core_ctxs);
@@ -65,26 +61,28 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     percpu::set_core_ctxs(core_ctxs);
 
-    let _ = task::create_task(unsafe {
-        VirtualAddress::from_raw_unchecked(
-            userspace::userspace_sleep_print_loop_1 as *const () as usize,
-        )
-    });
-    let _ = task::create_task(unsafe {
-        VirtualAddress::from_raw_unchecked(
-            userspace::userspace_sleep_print_loop_2 as *const () as usize,
-        )
-    });
-    let _ = task::create_task(unsafe {
-        VirtualAddress::from_raw_unchecked(
-            userspace::userspace_sleep_print_loop_3 as *const () as usize,
-        )
-    });
-    let _ = task::create_task(unsafe {
-        VirtualAddress::from_raw_unchecked(
-            userspace::userspace_sleep_print_loop_4 as *const () as usize,
-        )
-    });
+    task::spawn(b"/foo/sample_prog").unwrap();
+
+    // let _ = task::create_task(unsafe {
+    //     VirtualAddress::from_raw_unchecked(
+    //         userspace::userspace_sleep_print_loop_1 as *const () as usize,
+    //     )
+    // });
+    // let _ = task::create_task(unsafe {
+    //     VirtualAddress::from_raw_unchecked(
+    //         userspace::userspace_sleep_print_loop_2 as *const () as usize,
+    //     )
+    // });
+    // let _ = task::create_task(unsafe {
+    //     VirtualAddress::from_raw_unchecked(
+    //         userspace::userspace_sleep_print_loop_3 as *const () as usize,
+    //     )
+    // });
+    // let _ = task::create_task(unsafe {
+    //     VirtualAddress::from_raw_unchecked(
+    //         userspace::userspace_sleep_print_loop_4 as *const () as usize,
+    //     )
+    // });
 
     #[cfg(feature = "multi-core")]
     {
