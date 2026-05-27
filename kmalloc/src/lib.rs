@@ -5,12 +5,10 @@
 #[cfg(test)]
 extern crate std;
 
-mod helper;
 mod linked_list_allocator;
 
 use core::alloc::GlobalAlloc;
 
-pub(crate) use helper::align_up;
 pub use linked_list_allocator::*;
 
 pub trait KernelAllocator: GlobalAlloc + Sized {
@@ -28,4 +26,8 @@ pub trait KernelAllocator: GlobalAlloc + Sized {
     /// addresses before starting paging and then immediately get a trap
     /// once paging is enabled.
     unsafe fn new(start_addr: usize, end_addr: usize) -> Result<Self, ()>;
+}
+
+pub(crate) fn align_up(addr: usize, align: usize) -> usize {
+    (addr + align - 1) & !(align - 1)
 }
