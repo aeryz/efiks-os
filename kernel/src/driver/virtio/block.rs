@@ -15,6 +15,7 @@ use crate::{
         mmio::{self, RegisterOffset},
         virtqueue::{AvailableRing, Descriptor, DescriptorFlag, UsedRing},
     },
+    helper::align_up,
     mm,
 };
 
@@ -68,10 +69,6 @@ pub struct VirtioBlkDriver {
     used_ptr: *mut UsedRing<QUEUE_SIZE>,
     device_base: usize,
     last_used_idx: u16,
-}
-
-const fn align_up(x: usize, align: usize) -> usize {
-    (x + align - 1) & !(align - 1)
 }
 
 pub fn init(device_base: usize) -> Result<(), ()> {

@@ -22,7 +22,8 @@ pub struct GlobalScheduler {
 pub struct PerCoreScheduler {
     /// The list of the runnable tasks for this hart.
     runqueue: VecDeque<NonNull<Task>>,
-    /// The list of sleeping tasks that start sleeping when it was running on this core
+    /// The list of sleeping tasks that start sleeping when it was running on
+    /// this core
     sleeping_tasks: Vec<NonNull<Task>>,
     /// The time when the currently running process started running.
     last_entrance_time: usize,
@@ -40,8 +41,9 @@ pub fn init_per_core_scheduler() -> PerCoreScheduler {
 // - Check if we need to set the kernel sp to 0 for the idle task
 /// Schedules a task
 ///
-/// This does not guarantee that the currently running task will change. If there are no runnable
-/// tasks and the currently running task is `Ready`, it will continue to run.
+/// This does not guarantee that the currently running task will change. If
+/// there are no runnable tasks and the currently running task is `Ready`, it
+/// will continue to run.
 pub fn schedule() {
     log::trace!("Scheduling..");
     let ctx = unsafe {
@@ -86,8 +88,9 @@ pub fn schedule() {
         None => {
             log::trace!("rq is empty, switching to the idle task");
             let current_task = unsafe { ctx.currently_running_task.as_mut() };
-            // If there are no tasks that we can run and the currently running task can continue to be run,
-            // we just run it. This also covers if the current_task is the idle task.
+            // If there are no tasks that we can run and the currently running task can
+            // continue to be run, we just run it. This also covers if the
+            // current_task is the idle task.
             if current_task.state == TaskState::Ready {
                 log::trace!("current task is still ready, we don't switch to the idle task");
                 // TODO(aeryz): set last entrance time??
@@ -204,8 +207,9 @@ pub fn sleep_current_task(time_ms: usize) {
 
     let current_task = unsafe { ctx.currently_running_task.as_mut() };
     current_task.state = TaskState::Sleeping;
-    // Setting an invalid time s.t. it overflows will result in this task to be immediately woken up after a single time slice
-    // TODO(aeryz): check posix to see how they handle overflows
+    // Setting an invalid time s.t. it overflows will result in this task to be
+    // immediately woken up after a single time slice TODO(aeryz): check posix
+    // to see how they handle overflows
     current_task.wake_up_at = Arch::read_current_time()
         .checked_add(Arch::nanos_to_ticks(
             time_ms.checked_mul(1_000_000).unwrap_or(0),

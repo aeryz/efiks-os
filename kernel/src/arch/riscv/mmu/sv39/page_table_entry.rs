@@ -2,6 +2,7 @@ use crate::arch::mmu::PhysicalAddress;
 use bitflags::bitflags;
 
 bitflags! {
+    #[derive(Copy, Clone)]
     pub struct PteFlags: usize {
         const V = 1 << 0;
         const R = 1 << 1;

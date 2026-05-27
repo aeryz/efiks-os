@@ -11,7 +11,8 @@ pub(super) fn init(start_addr: PhysicalAddress) {
     FRAME_ALLOCATOR.lock().start_addr = start_addr;
 }
 
-// TODO: be able to allocate a custom amount (will probably have this while implementing sbrk)
+// TODO: be able to allocate a custom amount (will probably have this while
+// implementing sbrk)
 /// Allocate a single 4k page.
 pub fn alloc_frame() -> Result<PhysicalAddress, ()> {
     FRAME_ALLOCATOR.lock().alloc()

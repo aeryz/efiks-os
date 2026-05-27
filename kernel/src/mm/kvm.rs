@@ -1,5 +1,5 @@
-// TODO(aeryz): This module contains a lot of arch specific code since we full mapping of the memory.
-// We need to extend `arch::MemoryModel` to handle these.
+// TODO(aeryz): This module contains a lot of arch specific code since we full
+// mapping of the memory. We need to extend `arch::MemoryModel` to handle these.
 
 use crate::{
     Arch,
@@ -24,21 +24,27 @@ unsafe extern "C" {
 
 /// Performs early memory initialization and enables paging.
 ///
-/// This function *MUST* run in the early boot phase where the paging is not enabled yet.
-/// All the pointers used here are assumed to be physical addresses.
+/// This function *MUST* run in the early boot phase where the paging is not
+/// enabled yet. All the pointers used here are assumed to be physical
+/// addresses.
 ///
 /// # Responsibilities
 /// - Initializes the physical memory allocator starting from `__kernel_end`.
 /// - Creates the kernel root page table with the following mappings:
-///     - Whole memory is mapped with 1GB `RW` pages starting from `mm::KERNEL_DIRECT_MAPPING_BASE`.
-///     - The last 2GB of the memory is reserved for the kernel text and it's mapped with 2 1GB `RX` pages.
-///     - Kernel text is identity mapped so that we don't immediately trap after changing `satp`.
+///     - Whole memory is mapped with 1GB `RW` pages starting from
+///       `mm::KERNEL_DIRECT_MAPPING_BASE`.
+///     - The last 2GB of the memory is reserved for the kernel text and it's
+///       mapped with 2 1GB `RX` pages.
+///     - Kernel text is identity mapped so that we don't immediately trap after
+///       changing `satp`.
 /// - Enables the paging.
 /// - Changes the stack pointer to the higher base (0x80...-> 0xffff80...).
 ///
 /// # Safety
-/// - Assumes the kernel's executable text is put directly at `__text_start` and it ends in `__text_end`.
-/// - Assumes the `__kernel_end` is put at the end of the kernel image and is *4k-aligned*.
+/// - Assumes the kernel's executable text is put directly at `__text_start` and
+///   it ends in `__text_end`.
+/// - Assumes the `__kernel_end` is put at the end of the kernel image and is
+///   *4k-aligned*.
 /// - Assumes this is a single-hart boot.
 pub fn early_init() {
     // TODO(aeryz): We want to have a separate spot for the allocatable memory.
@@ -69,8 +75,8 @@ pub fn early_init() {
 
     // 64K kernel heap
     {
-        // TODO(aeryz): This depends on the assumption that the frame allocator will provide contiguous
-        // memory
+        // TODO(aeryz): This depends on the assumption that the frame allocator will
+        // provide contiguous memory
         let start_addr = frame_allocator::alloc_frame().unwrap();
         for _ in 0..14 {
             let _ = frame_allocator::alloc_frame().unwrap();
@@ -88,8 +94,9 @@ pub fn early_init() {
     Arch::bump_sp(mm::KERNEL_DIRECT_MAPPING_BASE.raw());
 }
 
-/// Maps the whole memory starting from `mm::KERNEL_DIRECT_MAPPING_BASE` and maps the kernel text as executable
-/// so that we don't need to switch page tables during traps.
+/// Maps the whole memory starting from `mm::KERNEL_DIRECT_MAPPING_BASE` and
+/// maps the kernel text as executable so that we don't need to switch page
+/// tables during traps.
 pub fn kvm_full_map(page_table: &mut PageTable) {
     let va = mm::KERNEL_DIRECT_MAPPING_BASE;
 
