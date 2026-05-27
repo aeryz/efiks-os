@@ -108,10 +108,10 @@ pub fn spawn(path: &[u8]) -> VfsResult<()> {
             return Err(VfsError::Fs);
         }
 
-        let vaddr = usize::try_from(seg.p_vaddr).map_err(|_| VfsError::Fs)?;
-        let memsz = usize::try_from(seg.p_memsz).map_err(|_| VfsError::Fs)?;
-        let filesz = usize::try_from(seg.p_filesz).map_err(|_| VfsError::Fs)?;
-        let file_offset = usize::try_from(seg.p_offset).map_err(|_| VfsError::Fs)?;
+        let vaddr = seg.p_vaddr as usize;
+        let memsz = seg.p_memsz as usize;
+        let filesz = seg.p_filesz as usize;
+        let file_offset = seg.p_offset as usize;
         let file_end = file_offset.checked_add(filesz).ok_or(VfsError::Fs)?;
         if file_end > fsize {
             return Err(VfsError::Fs);
@@ -219,10 +219,7 @@ pub fn spawn(path: &[u8]) -> VfsResult<()> {
 
     unsafe {
         *(trap_frame_ptr.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(
-            VirtualAddress::from_raw(
-                usize::try_from(elf_header.e_entry).map_err(|_| VfsError::Fs)?,
-            )
-            .map_err(|_| VfsError::Fs)?,
+            VirtualAddress::from_raw(elf_header.e_entry as usize).map_err(|_| VfsError::Fs)?,
             TASK_STACK_ADDRESS,
         );
     }
@@ -280,10 +277,10 @@ fn read_program_headers(
     }
 
     let entsize =
-        ProgramHeader::validate_entsize(elf_header.class, usize::from(elf_header.e_phentsize))
+        ProgramHeader::validate_entsize(elf_header.class, elf_header.e_phentsize as usize)
             .map_err(|_| VfsError::Fs)?;
-    let phnum = usize::from(elf_header.e_phnum);
-    let phoff = usize::try_from(elf_header.e_phoff).map_err(|_| VfsError::Fs)?;
+    let phnum = elf_header.e_phnum as usize;
+    let phoff = elf_header.e_phoff as usize;
     let phdrs_size = entsize.checked_mul(phnum).ok_or(VfsError::Fs)?;
     let phdrs_end = phoff.checked_add(phdrs_size).ok_or(VfsError::Fs)?;
     if phdrs_end > file_size {
