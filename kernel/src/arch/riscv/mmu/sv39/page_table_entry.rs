@@ -32,6 +32,7 @@ bitflags! {
 ///   1    2        7         26         9          9        2    1   1   1   1   1   1   1   1
 ///
 /// https://docs.riscv.org/reference/isa/priv/supervisor.html#addressing-and-memory-protection
+#[rustfmt::skip]
 #[derive(Copy, Clone)]
 pub struct PageTableEntry(usize);
 
@@ -72,7 +73,8 @@ impl PageTableEntry {
         self
     }
 
-    /// Sets the PPN\[2\], PPN\[1\] and PPN\[0\] to the bits[55:12] of the given `addr`
+    /// Sets the PPN\[2\], PPN\[1\] and PPN\[0\] to the bits[55:12] of the given
+    /// `addr`
     #[must_use]
     pub fn set_physical_address(mut self, addr: PhysicalAddress) -> Self {
         debug_assert!(

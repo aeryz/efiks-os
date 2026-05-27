@@ -1,7 +1,14 @@
 use core::ptr::{self, NonNull};
 
 use alloc::{collections::BTreeSet, vec::Vec};
-use elf::endian::LittleEndian;
+use elf::{
+    abi,
+    endian::LittleEndian,
+    file::{Class, FileHeader},
+    parse::ParseAt,
+    segment::ProgramHeader,
+};
+use vfs::{SeekFrom, VfsError, VfsResult};
 
 use crate::{
     Arch,
@@ -65,17 +72,9 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
     })
 }
 
-pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
+pub fn spawn(path: &[u8]) -> VfsResult<()> {
     let mut exec = crate::vfs::open(path)?;
     let fsize = exec.inode.sz();
-    let mut n_read = 0;
-
-    let mut buf = Vec::new();
-    buf.resize(exec.inode.sz(), 0);
-
-    while n_read < fsize {
-        n_read += exec.read(&mut buf)?;
-    }
 
     let process_root_table_pa = mm::alloc_frame().unwrap();
     let process_root_table_va =
@@ -88,10 +87,13 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
 
     log::info!("root pt: 0x{:x}", process_root_table_pa.raw());
 
-    let elf_bytes = elf::ElfBytes::<LittleEndian>::minimal_parse(&buf).unwrap();
+    let elf_header = read_elf_header(&mut exec)?;
+    let segments = read_program_headers(&mut exec, fsize, &elf_header)?;
     let mut mapped_pages = BTreeSet::<usize>::new();
+    let mut file_page_buf = Vec::new();
+    file_page_buf.resize(PAGE_SIZE, 0);
 
-    for seg in elf_bytes.segments().unwrap() {
+    for seg in segments {
         if seg.p_type != elf::abi::PT_LOAD {
             continue;
         }
@@ -102,19 +104,30 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
             seg.p_vaddr
         );
 
-        let vaddr = seg.p_vaddr as usize;
-        let memsz = seg.p_memsz as usize;
-        let filesz = seg.p_filesz as usize;
+        if seg.p_filesz > seg.p_memsz {
+            return Err(VfsError::Fs);
+        }
+
+        let vaddr = usize::try_from(seg.p_vaddr).map_err(|_| VfsError::Fs)?;
+        let memsz = usize::try_from(seg.p_memsz).map_err(|_| VfsError::Fs)?;
+        let filesz = usize::try_from(seg.p_filesz).map_err(|_| VfsError::Fs)?;
+        let file_offset = usize::try_from(seg.p_offset).map_err(|_| VfsError::Fs)?;
+        let file_end = file_offset.checked_add(filesz).ok_or(VfsError::Fs)?;
+        if file_end > fsize {
+            return Err(VfsError::Fs);
+        }
+
+        let mem_end = vaddr + memsz;
         let map_start = align_down(vaddr, PAGE_SIZE);
-        let map_end = align_up(vaddr + memsz, PAGE_SIZE);
+        let map_end = align_up(mem_end, PAGE_SIZE);
         let flags = convert_elf_flag_to_pte(seg.p_flags);
 
         let mut page = map_start;
         while page < map_end {
-            let va = VirtualAddress::from_raw(page).unwrap();
+            let va = VirtualAddress::from_raw(page).map_err(|_| VfsError::Fs)?;
 
             if mapped_pages.contains(&va.raw()) {
-                let pa = unsafe { (*process_root_table).translate(va) }.unwrap();
+                let pa = unsafe { (*process_root_table).translate(va) }.ok_or(VfsError::Fs)?;
                 unsafe {
                     (*process_root_table).map_vm(va, pa, flags);
                 }
@@ -130,7 +143,8 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
                 let _ = mapped_pages.insert(va.raw());
                 let _ = address_space.regions.push(VmRegion {
                     start: va,
-                    end: VirtualAddress::from_raw(va.raw() + PAGE_SIZE).unwrap(),
+                    end: VirtualAddress::from_raw(va.raw() + PAGE_SIZE)
+                        .map_err(|_| VfsError::Fs)?,
                 });
             }
 
@@ -145,13 +159,18 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
             let copy_len = (PAGE_SIZE - page_offset).min(filesz - copied);
             let page_pa = unsafe {
                 (*process_root_table)
-                    .translate(VirtualAddress::from_raw(page_va).unwrap())
-                    .unwrap()
+                    .translate(VirtualAddress::from_raw(page_va).map_err(|_| VfsError::Fs)?)
+                    .ok_or(VfsError::Fs)?
             };
+            read_exact_at(
+                &mut exec,
+                file_offset + copied,
+                &mut file_page_buf[..copy_len],
+            )?;
 
             unsafe {
                 ptr::copy_nonoverlapping(
-                    buf.as_ptr().add(seg.p_offset as usize + copied),
+                    file_page_buf.as_ptr(),
                     (mm::phys_to_virt(page_pa.raw()) + page_offset) as *mut u8,
                     copy_len,
                 );
@@ -200,7 +219,10 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
 
     unsafe {
         *(trap_frame_ptr.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(
-            VirtualAddress::from_raw(elf_bytes.ehdr.e_entry as usize).unwrap(),
+            VirtualAddress::from_raw(
+                usize::try_from(elf_header.e_entry).map_err(|_| VfsError::Fs)?,
+            )
+            .map_err(|_| VfsError::Fs)?,
             TASK_STACK_ADDRESS,
         );
     }
@@ -224,6 +246,81 @@ pub fn spawn(path: &[u8]) -> vfs::VfsResult<()> {
     });
 
     sched::enqueue_new_task(task_ptr);
+
+    Ok(())
+}
+
+fn read_elf_header(exec: &mut vfs::File) -> VfsResult<FileHeader<LittleEndian>> {
+    let mut ident_buf = [0; abi::EI_NIDENT];
+    read_exact_at(exec, 0, &mut ident_buf)?;
+
+    let ident = elf::file::parse_ident::<LittleEndian>(&ident_buf).map_err(|_| VfsError::Fs)?;
+    let tail_size = match ident.1 {
+        Class::ELF32 => elf::file::ELF32_EHDR_TAILSIZE,
+        Class::ELF64 => elf::file::ELF64_EHDR_TAILSIZE,
+    };
+    let mut tail_buf = Vec::new();
+    tail_buf.resize(tail_size, 0);
+    read_exact_at(exec, abi::EI_NIDENT, &mut tail_buf)?;
+
+    FileHeader::parse_tail(ident, &tail_buf).map_err(|_| VfsError::Fs)
+}
+
+fn read_program_headers(
+    exec: &mut vfs::File,
+    file_size: usize,
+    elf_header: &FileHeader<LittleEndian>,
+) -> VfsResult<Vec<ProgramHeader>> {
+    if elf_header.e_phoff == 0 || elf_header.e_phnum == 0 {
+        return Ok(Vec::new());
+    }
+
+    if elf_header.e_phnum == abi::PN_XNUM {
+        return Err(VfsError::Fs);
+    }
+
+    let entsize =
+        ProgramHeader::validate_entsize(elf_header.class, usize::from(elf_header.e_phentsize))
+            .map_err(|_| VfsError::Fs)?;
+    let phnum = usize::from(elf_header.e_phnum);
+    let phoff = usize::try_from(elf_header.e_phoff).map_err(|_| VfsError::Fs)?;
+    let phdrs_size = entsize.checked_mul(phnum).ok_or(VfsError::Fs)?;
+    let phdrs_end = phoff.checked_add(phdrs_size).ok_or(VfsError::Fs)?;
+    if phdrs_end > file_size {
+        return Err(VfsError::Fs);
+    }
+
+    let mut phdrs_buf = Vec::new();
+    phdrs_buf.resize(phdrs_size, 0);
+    read_exact_at(exec, phoff, &mut phdrs_buf)?;
+
+    let mut phdrs = Vec::new();
+    for i in 0..phnum {
+        let mut offset = i.checked_mul(entsize).ok_or(VfsError::Fs)?;
+        let phdr = ProgramHeader::parse_at(
+            elf_header.endianness,
+            elf_header.class,
+            &mut offset,
+            &phdrs_buf,
+        )
+        .map_err(|_| VfsError::Fs)?;
+        let _ = phdrs.push(phdr);
+    }
+
+    Ok(phdrs)
+}
+
+fn read_exact_at(exec: &mut vfs::File, offset: usize, buf: &mut [u8]) -> VfsResult<()> {
+    exec.seek(SeekFrom::Start(offset))?;
+
+    let mut n_read = 0;
+    while n_read < buf.len() {
+        let read = exec.read(&mut buf[n_read..])?;
+        if read == 0 {
+            return Err(VfsError::Fs);
+        }
+        n_read += read;
+    }
 
     Ok(())
 }
