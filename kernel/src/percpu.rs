@@ -16,18 +16,19 @@ pub struct PerCoreContext {
     // pub reaper_task: NonNull<Task>,
 }
 
-// TODO(aeryz): Storing pointers (that can possibly be *mut) in the PerCpuContext
-// unimpls the `Send` which results in the fact that we cannot put it in a `SpinLock`.
-// The fact that we can have mutable reference to the `PerCpuContext` and `CORES` at the
-// same time is very dangerous. This is probably not the correct abstraction to go. And
-// we really need to think more about this.
+// TODO(aeryz): Storing pointers (that can possibly be *mut) in the
+// PerCpuContext unimpls the `Send` which results in the fact that we cannot put
+// it in a `SpinLock`. The fact that we can have mutable reference to the
+// `PerCpuContext` and `CORES` at the same time is very dangerous. This is
+// probably not the correct abstraction to go. And we really need to think more
+// about this.
 unsafe impl Send for PerCoreContext {}
 
 struct CoreTable(OnceCell<Vec<PerCoreContext>>);
 
 /// SAFETY:
-/// CoreTable is a fixed table that will be initialized with the cores once and won't be mutated
-/// anymore.
+/// CoreTable is a fixed table that will be initialized with the cores once and
+/// won't be mutated anymore.
 unsafe impl Send for CoreTable {}
 unsafe impl Sync for CoreTable {}
 

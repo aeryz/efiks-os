@@ -24,7 +24,8 @@ impl PageTable {
 
     /// Map the `va` to `pa`.
     ///
-    /// This should be used after the virtual memory is enabled and the kvm mappings are done.
+    /// This should be used after the virtual memory is enabled and the kvm
+    /// mappings are done.
     pub fn map_vm(&mut self, va: VirtualAddress, pa: PhysicalAddress, flags: PteFlags) {
         self.map_memory_with_base(va, pa, flags, KERNEL_DIRECT_MAPPING_BASE.raw() as usize);
     }
@@ -62,7 +63,9 @@ impl PageTable {
         let l0_page_table = Self::get_or_create_next_table(l1_entry, base);
 
         let l0_entry = unsafe { (*l0_page_table).0.get_unchecked_mut(va.vpn_0()) };
-        if !l0_entry.is_valid() {
+        if l0_entry.is_valid() {
+            *l0_entry = l0_entry.set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D);
+        } else {
             *l0_entry = l0_entry
                 .set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D)
                 .set_physical_address(pa);

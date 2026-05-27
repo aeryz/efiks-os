@@ -10,6 +10,7 @@ extern crate alloc;
 mod arch;
 mod debug;
 mod driver;
+mod helper;
 mod mm;
 mod percpu;
 mod sched;
