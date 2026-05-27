@@ -30,7 +30,7 @@ While the architecture is designed to be ISA-independent, the current implementa
 - [x] Basic filesystem support
 - [ ] Improve memory management (allocator, paging, regions)
 - [ ] Process lifecycle (cleanup, reaper, better scheduling)
-- [ ] Expand syscalls + userspace support (ELF loader)
+- [x] Expand syscalls + userspace support (ELF loader)
 - [ ] Improve filesystem (features, robustness)
 - [ ] Device support (e.g. VirtIO)
 - [ ] Strengthen ISA abstraction (beyond RISC-V)
