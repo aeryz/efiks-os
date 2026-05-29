@@ -73,10 +73,7 @@ impl PageTable {
         let l0_page_table = Self::get_or_create_next_table(l1_entry, base);
 
         let l0_entry = unsafe { (*l0_page_table).0.get_unchecked_mut(va.vpn_0()) };
-        if l0_entry.is_valid() {
-            *l0_entry = l0_entry.set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D);
-        } else {
-            *l0_entry = l0_entry.set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D);
+        if !l0_entry.is_valid() {
             if let Some(pa) = pa {
                 *l0_entry = l0_entry.set_physical_address(pa);
             } else {
@@ -84,6 +81,7 @@ impl PageTable {
                 panic!("trying to remap a vm with pa = None");
             }
         }
+        *l0_entry = l0_entry.set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D);
     }
 
     fn get_or_create_next_table(pte: &mut PageTableEntry, base: usize) -> *mut PageTable {

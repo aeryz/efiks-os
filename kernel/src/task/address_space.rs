@@ -81,9 +81,9 @@ impl AddressSpace {
                 start: kernel_stack_va,
                 end: VirtualAddress::from_raw(kernel_stack_va.raw() + 4096).unwrap(),
             });
-            unsafe {
-                (*self.root_pt_ptr()).map_vm(kernel_stack_va, kernel_stack, PteFlags::RW);
-            }
+
+            // We don't do mapping here because we already did `kvm_full_map` which maps the
+            // entire memory with 1GB pages
 
             kernel_stack_top = PhysicalAddress::from_raw(kernel_stack.raw() + 0xfa0).unwrap();
         }
