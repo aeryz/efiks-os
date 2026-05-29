@@ -19,7 +19,7 @@ impl PageTable {
     ///
     /// This only meant to operate when the virtual memory is not enabled.
     pub fn map_vm_early(&mut self, va: VirtualAddress, pa: PhysicalAddress, flags: PteFlags) {
-        self.map_memory_with_base(va, pa, flags, 0);
+        self.map_memory_with_base(va, Some(pa), flags, 0);
     }
 
     /// Map the `va` to `pa`.
@@ -27,7 +27,17 @@ impl PageTable {
     /// This should be used after the virtual memory is enabled and the kvm
     /// mappings are done.
     pub fn map_vm(&mut self, va: VirtualAddress, pa: PhysicalAddress, flags: PteFlags) {
-        self.map_memory_with_base(va, pa, flags, KERNEL_DIRECT_MAPPING_BASE.raw() as usize);
+        self.map_memory_with_base(
+            va,
+            Some(pa),
+            flags,
+            KERNEL_DIRECT_MAPPING_BASE.raw() as usize,
+        );
+    }
+
+    /// Map the `va`
+    pub fn remap_vm(&mut self, va: VirtualAddress, flags: PteFlags) {
+        self.map_memory_with_base(va, None, flags, KERNEL_DIRECT_MAPPING_BASE.raw() as usize);
     }
 
     pub fn translate(&self, va: VirtualAddress) -> Option<PhysicalAddress> {
@@ -51,7 +61,7 @@ impl PageTable {
     fn map_memory_with_base(
         &mut self,
         va: VirtualAddress,
-        pa: PhysicalAddress,
+        pa: Option<PhysicalAddress>,
         flags: PteFlags,
         base: usize,
     ) {
@@ -66,9 +76,13 @@ impl PageTable {
         if l0_entry.is_valid() {
             *l0_entry = l0_entry.set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D);
         } else {
-            *l0_entry = l0_entry
-                .set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D)
-                .set_physical_address(pa);
+            *l0_entry = l0_entry.set_flags(flags | PteFlags::V | PteFlags::A | PteFlags::D);
+            if let Some(pa) = pa {
+                *l0_entry = l0_entry.set_physical_address(pa);
+            } else {
+                // TODO(aeryz): make this API return an error
+                panic!("trying to remap a vm with pa = None");
+            }
         }
     }
 
