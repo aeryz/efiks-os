@@ -1,29 +1,47 @@
 use core::ptr::NonNull;
 
-use alloc::vec::Vec;
+use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use ksync::SpinLock;
+use slab::Slab;
 
-use crate::task::Task;
+use crate::task::{Pid, Task};
 
-static TASK_TABLE: TaskTable = TaskTable(SpinLock::new(Vec::new()));
+const MAX_TASK_PER_SLAB: usize = 100;
 
-// TODO(aeryz): this is super crucial right now since we can't handle task table
-// getting realloc'ed. However, this is just a hack and it's doomed to fail.
-// Until we have a parent/child relationship and convert the tasktable to be a
-// tree, we can keep this.
-pub fn init() {
-    TASK_TABLE.0.lock().reserve(64);
+static TASK_POOL: TaskPool = TaskPool(SpinLock::new(TaskPoolInner {
+    slabs: Vec::new(),
+    pid_to_idx: BTreeMap::new(),
+}));
+
+struct TaskPool(SpinLock<TaskPoolInner>);
+
+struct TaskPoolInner {
+    slabs: Vec<Slab<Task>>,
+    pid_to_idx: BTreeMap<Pid, (usize, usize)>,
 }
 
 pub fn add_task(task: Task) -> NonNull<Task> {
-    let mut table = TASK_TABLE.0.lock();
-    let len = table.len();
-    table.push(task);
+    let mut pool = TASK_POOL.0.lock();
 
-    NonNull::new(&mut table[len] as *mut Task).expect("task is nonnull")
+    let slab_idx = pool
+        .slabs
+        .iter()
+        .position(|slab| slab.len() < slab.capacity())
+        .unwrap_or_else(|| {
+            pool.slabs.push(Slab::with_capacity(MAX_TASK_PER_SLAB));
+            pool.slabs.len() - 1
+        });
+
+    let slab = &mut pool.slabs[slab_idx];
+    debug_assert!(slab.len() < slab.capacity());
+
+    let pid = task.pid;
+    let task_idx = slab.insert(task);
+    let task_ptr =
+        NonNull::new(slab.get_mut(task_idx).unwrap() as *mut Task).expect("task is nonnull");
+    pool.pid_to_idx.insert(pid, (slab_idx, task_idx));
+
+    task_ptr
 }
 
-struct TaskTable(SpinLock<Vec<Task>>);
-
-unsafe impl Send for TaskTable {}
-unsafe impl Sync for TaskTable {}
+unsafe impl Sync for TaskPool {}

@@ -13,6 +13,7 @@ kmalloc = { workspace = true }
 vfs = { workspace = true }
 vsfs = { workspace = true }
 elf = { version = "0.8.0", default-features = false, features = ["alloc"] }
+slab = { version = "0.4.12", default-features = false }
 
 [build-dependencies]
 cc = "1"

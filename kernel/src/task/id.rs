@@ -5,7 +5,7 @@ use core::{
 
 static PID_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
 #[repr(C)]
 pub struct Pid(usize);
 

@@ -42,8 +42,6 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
     serial_log::init();
     log::info!("Kernel starts with hart_id: {hartid}, dtb: 0x{dtb_address:x}",);
 
-    task::init();
-
     let blk_device_base = virtio::find_virtio_blk().expect("virtio must exist");
     log::info!("Found VirtIO device at address: {blk_device_base:x}");
 
