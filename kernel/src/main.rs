@@ -10,6 +10,8 @@ extern crate alloc;
 mod arch;
 mod debug;
 mod driver;
+pub mod error;
+pub mod exec;
 mod helper;
 mod mm;
 mod percpu;
