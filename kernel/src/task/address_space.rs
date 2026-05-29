@@ -53,11 +53,11 @@ impl AddressSpace {
 
     pub fn create_user_stack(&mut self) -> VirtualAddressOf<Arch> {
         // 32KB user stack
-        let mut va = unsafe { VirtualAddress::from_raw_unchecked(0x0000_0000_3fff_0000) };
+        let stack_base = 0x0000_0000_3fff_0000;
         for i in 0..8 {
             let user_stack = mm::alloc_frame().unwrap();
 
-            va = VirtualAddress::from_raw(va.raw() + 0x1000 * i).unwrap();
+            let va = VirtualAddress::from_raw(stack_base + PAGE_SIZE * i).unwrap();
             unsafe { (*self.root_pt_ptr()).map_vm(va, user_stack, PteFlags::RW | PteFlags::U) };
             let _ = self.regions.push(VmRegion {
                 start: va,
@@ -65,7 +65,7 @@ impl AddressSpace {
             });
         }
 
-        VirtualAddress::from_raw(va.raw() + 0x3fa).unwrap()
+        VirtualAddress::from_raw(stack_base + PAGE_SIZE * 8 - 0x60).unwrap()
     }
 
     pub fn create_kernel_stack(&mut self) -> PhysicalAddressOf<Arch> {
@@ -118,6 +118,10 @@ impl AddressSpace {
         unsafe {
             (*self.root_pt_ptr()).remap_vm(va, flags);
         };
+    }
+
+    pub fn translate(&self, va: VirtualAddressOf<Arch>) -> Option<PhysicalAddressOf<Arch>> {
+        unsafe { (*self.root_pt_ptr()).translate(va) }
     }
 
     fn root_pt_ptr(&self) -> *mut PageTable {
