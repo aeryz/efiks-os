@@ -1,25 +1,23 @@
 use core::ptr;
 
 use alloc::{
-    collections::{
-        btree_map::{BTreeMap, Entry},
-        btree_set::BTreeSet,
-    },
+    collections::btree_map::{BTreeMap, Entry},
     vec::Vec,
 };
 use elf::{
     abi::{self, ET_EXEC, PT_LOAD},
     endian::LittleEndian,
-    file::{Class, FileHeader},
+    file::FileHeader,
     parse::ParseAt,
     segment::ProgramHeader,
 };
 use vfs::SeekFrom;
 
 use crate::{
+    Arch,
     arch::{
         VirtualAddressOf,
-        mmu::{PageTable, PteFlags, VirtualAddress},
+        mmu::{PteFlags, VirtualAddress},
     },
     error,
     helper::{align_down, align_up},
@@ -27,6 +25,7 @@ use crate::{
     task::AddressSpace,
 };
 
+#[derive(Debug)]
 pub enum Error {
     Unsupported,
     SizeOverflow,
@@ -53,18 +52,33 @@ pub fn load_executable(
     let mut loader = Elf::load_from_file(path)?;
 
     let mut mapped_pages = BTreeMap::new();
+    let mut file_page_buf = Vec::new();
+    file_page_buf.resize(PAGE_SIZE, 0);
+
     for ph in loader.program_headers {
         // We only load the segments that are loadable
         if ph.p_type != PT_LOAD {
             continue;
         }
 
+        if (ph.p_offset as usize)
+            .checked_add(ph.p_filesz as usize)
+            .ok_or(Error::SizeOverflow)?
+            > loader.file.inode.sz()
+        {
+            return Err(Error::InvalidProgramHeader.into());
+        }
+
         let mut aligned_vaddr = align_down(ph.p_vaddr as usize, PAGE_SIZE);
-        let aligned_vaddr_end = align_up((ph.p_vaddr + ph.p_memsz) as usize, PAGE_SIZE);
+        let aligned_vaddr_end = align_up(
+            (ph.p_vaddr as usize)
+                .checked_add(ph.p_memsz as usize)
+                .ok_or(Error::SizeOverflow)?,
+            PAGE_SIZE,
+        );
 
         let flags = convert_elf_flag_to_pte(ph.p_flags);
 
-        let mut file_page_buf = Vec::new();
         while aligned_vaddr < aligned_vaddr_end {
             let va = VirtualAddress::from_raw(aligned_vaddr)
                 .map_err(|_| Error::InvalidVirtualAddress)?;
@@ -82,6 +96,7 @@ pub fn load_executable(
                 Entry::Occupied(mut e) => {
                     let new_flags = (*e.get()) | flags;
                     address_space.remap_page(va, new_flags);
+                    e.insert(new_flags);
                 }
             }
 
@@ -91,24 +106,25 @@ pub fn load_executable(
         // Based on the segment's size on the disc, we copy it to the `vaddr` that we
         // previously mapped in chunks.
         let mut copied = 0;
-        while copied < ph.p_filesz {
-            let page_va = align_down((ph.p_vaddr + copied) as usize, PAGE_SIZE);
-            let page_offset = ph.p_paddr as usize - page_va;
+        while copied < ph.p_filesz as usize {
+            let copy_vaddr = (ph.p_vaddr as usize)
+                .checked_add(copied)
+                .ok_or(Error::SizeOverflow)?;
+            let page_va = align_down(copy_vaddr, PAGE_SIZE);
+            let page_offset = copy_vaddr - page_va;
 
             // Get the previously mapped physical address from the page table so that
             // we can actually write to it. Because this `page_va` lives under the page
             // table of `address_space`. We need to convert it to kernel's mapped address.
-            let page_pa = unsafe {
-                (*(address_space.root_pt.raw() as *mut PageTable))
-                    .translate(VirtualAddress::from_raw_unchecked(page_va))
-                    .expect("this is already mapped")
-            };
-            let copy_len = (PAGE_SIZE - page_offset).min((ph.p_filesz - copied) as usize);
+            let page_pa = address_space
+                .translate(unsafe { VirtualAddress::from_raw_unchecked(page_va) })
+                .expect("this is already mapped");
+            let copy_len = (PAGE_SIZE - page_offset).min(ph.p_filesz as usize - copied);
             read_exact_at(
                 &mut loader.file,
-                (ph.p_offset + copied) as usize,
+                ph.p_offset as usize + copied,
                 &mut file_page_buf[..copy_len],
-            );
+            )?;
 
             unsafe {
                 ptr::copy_nonoverlapping(
@@ -118,7 +134,7 @@ pub fn load_executable(
                 );
             }
 
-            copied += copy_len as u64;
+            copied += copy_len;
         }
     }
 

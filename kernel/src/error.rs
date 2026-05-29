@@ -1,5 +1,6 @@
 use crate::exec;
 
+#[derive(Debug)]
 pub enum Error {
     Vfs(vfs::VfsError),
     Elf(exec::elf::Error),

@@ -1,35 +1,16 @@
-use core::ptr::{self, NonNull};
-
-use alloc::{collections::BTreeSet, vec::Vec};
-use elf::{
-    abi,
-    endian::LittleEndian,
-    file::{Class, FileHeader},
-    parse::ParseAt,
-    segment::ProgramHeader,
-};
-use vfs::{SeekFrom, VfsError, VfsResult};
+use core::ptr::NonNull;
 
 use crate::{
     Arch,
     arch::{
         Architecture, Context, ContextOf, TrapFrame, TrapFrameOf, VirtualAddressOf,
-        mmu::{PageTable, PhysicalAddress, PteFlags, VirtualAddress},
+        mmu::VirtualAddress,
     },
     error, exec,
-    helper::{align_down, align_up},
     mm::{self, KERNEL_DIRECT_MAPPING_BASE},
     sched,
-    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState, VmRegion},
+    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState},
 };
-
-// TODO(aeryz): this is still a bogus address and can collide with the other
-// stuff. Have a task address limit and reserve the stack near the top. And
-// check for collisions.
-pub const TASK_STACK_ADDRESS: VirtualAddress =
-    unsafe { VirtualAddress::from_raw_unchecked(0x0000_0000_3fff_3fa0) };
-
-const PAGE_SIZE: usize = 4096;
 
 #[repr(C)]
 #[derive(Clone)]
@@ -74,7 +55,7 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
 }
 
 pub fn spawn(path: &[u8]) -> Result<(), error::Error> {
-    let address_space = AddressSpace::new_user();
+    let mut address_space = AddressSpace::new_user();
 
     let entry_va = exec::elf::load_executable(path, &mut address_space)?;
 
@@ -108,81 +89,4 @@ pub fn spawn(path: &[u8]) -> Result<(), error::Error> {
     sched::enqueue_new_task(task_ptr);
 
     Ok(())
-}
-
-fn read_program_headers(
-    exec: &mut vfs::File,
-    file_size: usize,
-    elf_header: &FileHeader<LittleEndian>,
-) -> VfsResult<Vec<ProgramHeader>> {
-    if elf_header.e_phoff == 0 || elf_header.e_phnum == 0 {
-        return Ok(Vec::new());
-    }
-
-    if elf_header.e_phnum == abi::PN_XNUM {
-        return Err(VfsError::Fs);
-    }
-
-    let entsize =
-        ProgramHeader::validate_entsize(elf_header.class, elf_header.e_phentsize as usize)
-            .map_err(|_| VfsError::Fs)?;
-    let phnum = elf_header.e_phnum as usize;
-    let phoff = elf_header.e_phoff as usize;
-    let phdrs_size = entsize.checked_mul(phnum).ok_or(VfsError::Fs)?;
-    let phdrs_end = phoff.checked_add(phdrs_size).ok_or(VfsError::Fs)?;
-    if phdrs_end > file_size {
-        return Err(VfsError::Fs);
-    }
-
-    let mut phdrs_buf = Vec::new();
-    phdrs_buf.resize(phdrs_size, 0);
-    read_exact_at(exec, phoff, &mut phdrs_buf)?;
-
-    let mut phdrs = Vec::new();
-    for i in 0..phnum {
-        let mut offset = i.checked_mul(entsize).ok_or(VfsError::Fs)?;
-        let phdr = ProgramHeader::parse_at(
-            elf_header.endianness,
-            elf_header.class,
-            &mut offset,
-            &phdrs_buf,
-        )
-        .map_err(|_| VfsError::Fs)?;
-        let _ = phdrs.push(phdr);
-    }
-
-    Ok(phdrs)
-}
-
-fn read_exact_at(exec: &mut vfs::File, offset: usize, buf: &mut [u8]) -> VfsResult<()> {
-    exec.seek(SeekFrom::Start(offset))?;
-
-    let mut n_read = 0;
-    while n_read < buf.len() {
-        let read = exec.read(&mut buf[n_read..])?;
-        if read == 0 {
-            return Err(VfsError::Fs);
-        }
-        n_read += read;
-    }
-
-    Ok(())
-}
-
-fn convert_elf_flag_to_pte(elf_flag: u32) -> PteFlags {
-    let mut flags = PteFlags::U;
-
-    if (elf_flag & elf::abi::PF_R) != 0 {
-        flags |= PteFlags::R;
-    }
-
-    if (elf_flag & elf::abi::PF_W) != 0 {
-        flags |= PteFlags::W;
-    }
-
-    if (elf_flag & elf::abi::PF_X) != 0 {
-        flags |= PteFlags::X;
-    }
-
-    flags
 }
