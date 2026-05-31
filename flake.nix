@@ -82,6 +82,8 @@
         openssl
         pkg-config
         qemu
+        zig
+        zls
       ] ++ [
         rust-toolchain
         bindgen
