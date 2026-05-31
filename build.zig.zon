@@ -1,0 +1,16 @@
+.{
+    .name = .efiks,
+    .version = "0.0.0",
+    .fingerprint = 0x81bec5ba2114873c, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .efiks_lib_zig = .{
+            .path = "efiks-lib/zig",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "efiks-lib/zig",
+    },
+}

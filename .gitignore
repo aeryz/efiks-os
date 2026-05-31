@@ -13,3 +13,6 @@ result
 *.img
 
 tmpfs/
+
+.zig-cache/
+zig-out/
