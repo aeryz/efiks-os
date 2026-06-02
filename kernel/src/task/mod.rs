@@ -1,4 +1,5 @@
 mod address_space;
+pub mod file_table;
 mod id;
 mod state;
 mod table;

@@ -21,12 +21,9 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
     let syscall_number = tf.get_syscall();
     match syscall_number {
         SYSCALL_WRITE => {
-            let _fd = tf.get_arg::<0>();
+            let fd = tf.get_arg::<0>();
             let buf = tf.get_arg::<1>() as *const u8;
             let count = tf.get_arg::<2>();
-
-            let utf8_str =
-                unsafe { str::from_utf8_unchecked(core::slice::from_raw_parts(buf, count)) };
 
             let this_ctx = unsafe {
                 Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
@@ -34,12 +31,21 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                     .unwrap()
             };
 
-            log::trace!(
-                "this syscall is called by {} with buf: {:?}",
-                this_ctx.core_id,
-                buf
-            );
-            crate::printk(utf8_str);
+            let current_task = unsafe { this_ctx.currently_running_task.as_ref() };
+            let file = {
+                let file_table = current_task.file_table.lock();
+                file_table.get_file(fd)
+            };
+
+            let Some(file) = file else {
+                tf.set_syscall_return_value(0);
+                return;
+            };
+
+            let count = file
+                .lock()
+                .write(unsafe { core::slice::from_raw_parts(buf, count) })
+                .unwrap_or(usize::MAX);
 
             tf.set_syscall_return_value(count);
         }

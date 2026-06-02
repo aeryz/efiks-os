@@ -1,5 +1,7 @@
 use core::ptr::NonNull;
 
+use ksync::SpinLock;
+
 use crate::{
     Arch,
     arch::{
@@ -9,11 +11,10 @@ use crate::{
     error, exec,
     mm::{self, KERNEL_DIRECT_MAPPING_BASE},
     sched,
-    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState},
+    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState, file_table::FileTable},
 };
 
 #[repr(C)]
-#[derive(Clone)]
 pub struct Task {
     /// Process ID
     pub pid: Pid,
@@ -31,6 +32,8 @@ pub struct Task {
     pub exit_code: i32,
     /// Address space
     pub address_space: AddressSpace,
+    /// List of open files
+    pub file_table: SpinLock<FileTable>,
 }
 
 pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
@@ -51,6 +54,7 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         wake_up_at: 0,
         exit_code: -1,
         address_space: ADDRESS_SPACE_EMPTY,
+        file_table: SpinLock::new(FileTable::init()),
     })
 }
 
@@ -84,6 +88,7 @@ pub fn spawn(path: &[u8]) -> Result<(), error::Error> {
         wake_up_at: 0,
         exit_code: -1,
         address_space,
+        file_table: SpinLock::new(FileTable::init()),
     });
 
     sched::enqueue_new_task(task_ptr);
