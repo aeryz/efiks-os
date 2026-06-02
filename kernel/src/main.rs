@@ -53,7 +53,7 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     let mut core_ctxs = Vec::new();
 
-    setup_core(0, &mut core_ctxs);
+    setup_core(hartid, &mut core_ctxs);
     #[cfg(feature = "multi-core")]
     {
         setup_core(1, &mut core_ctxs);
@@ -163,16 +163,17 @@ extern "C" fn core_boot_entry(core: usize) -> ! {
     Arch::init_trap_handler();
     log::trace!("trap handler initiated");
 
-    Arch::init_uart(core);
-    log::trace!("uart initiated");
+    let core_ctx = percpu::get_core(core);
+    Arch::set_per_cpu_ctx_ptr(
+        VirtualAddress::from_raw(core_ctx as *const percpu::PerCoreContext as usize).unwrap(),
+    );
+
+    Arch::init_uart(core_ctx.core_id);
+    log::trace!("uart initiated for hart {}", core_ctx.core_id);
 
     uart::enable_interrupts();
     log::trace!("uart interrupts enabled");
 
-    Arch::set_per_cpu_ctx_ptr(
-        VirtualAddress::from_raw(percpu::get_core(core) as *const percpu::PerCoreContext as usize)
-            .unwrap(),
-    );
     Arch::setup_unpriviledged_mode();
 
     let time = Arch::read_current_time();
@@ -200,8 +201,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 #[unsafe(no_mangle)]
 #[inline(never)]
 extern "C" fn idle_task_main() -> ! {
-    log::debug!("idle mode");
-
     loop {
         riscv::registers::Sstatus::read()
             .enable_supervisor_interrupts()
