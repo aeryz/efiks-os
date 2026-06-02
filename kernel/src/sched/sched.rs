@@ -1,6 +1,12 @@
 use core::ptr::NonNull;
 
-use alloc::{collections::vec_deque::VecDeque, vec::Vec};
+use alloc::{
+    collections::{
+        btree_map::{BTreeMap, Entry},
+        vec_deque::VecDeque,
+    },
+    vec::Vec,
+};
 use ksync::SpinLock;
 
 use crate::{
@@ -12,11 +18,15 @@ use crate::{
 
 static SCHEDULER_CTX: SpinLock<GlobalScheduler> = SpinLock::new(GlobalScheduler {
     last_rq_hart_idx: 0,
+    irq_wait_queue: BTreeMap::new(),
 });
 
 pub struct GlobalScheduler {
     last_rq_hart_idx: usize,
+    irq_wait_queue: BTreeMap<u32, VecDeque<NonNull<Task>>>,
 }
+
+unsafe impl Send for GlobalScheduler {}
 
 #[repr(C)]
 pub struct PerCoreScheduler {
@@ -140,7 +150,7 @@ pub fn enqueue_new_task(mut task: NonNull<Task>) {
     core_ctx.scheduler.lock().runqueue.push_back(task);
 }
 
-pub fn timer_interrupt() {
+pub fn on_timer_interrupt() {
     let ctx = unsafe {
         Arch::load_this_cpu_ctx::<PerCoreContext>()
             .as_ref()
@@ -185,8 +195,11 @@ pub fn timer_interrupt() {
         Arch::set_timer(current_time + Arch::nanos_to_ticks(8 * 1_000_000));
     };
 
-    if ctx.currently_running_task != ctx.idle_task
-        && current_time - last_entrance > Arch::nanos_to_ticks(32 * 1_000_000)
+    if (ctx.currently_running_task != ctx.idle_task
+        && current_time - last_entrance > Arch::nanos_to_ticks(32 * 1_000_000))
+        || some_task_woke_up
+        || (ctx.currently_running_task == ctx.idle_task
+            && !ctx.scheduler.lock().runqueue.is_empty())
     {
         set_timer();
         schedule();
@@ -196,6 +209,56 @@ pub fn timer_interrupt() {
     } else {
         set_timer();
     }
+}
+
+/// Non timer-interrupts
+pub fn on_external_irq(irq: u32) {
+    let mut task = {
+        let mut scheduler_ctx = SCHEDULER_CTX.lock();
+        log::trace!("checking if there is a wait queue");
+        let Some(queue) = scheduler_ctx.irq_wait_queue.get_mut(&irq) else {
+            return;
+        };
+        log::trace!("yes there is");
+
+        let Some(task) = queue.pop_front() else {
+            return;
+        };
+        log::trace!("yes there is a task");
+
+        task
+    };
+
+    log::trace!("enqueueuing");
+
+    unsafe {
+        task.as_mut().state = TaskState::Ready;
+    }
+    enqueue_new_task(task);
+}
+
+/// Yields execution when a task gets blocked because of an external irq
+pub fn block_on_external_irq(irq: u32) {
+    let ctx = unsafe {
+        Arch::load_this_cpu_ctx::<PerCoreContext>()
+            .as_mut()
+            .expect("expected a valid reference to the per-CPU context")
+    };
+
+    unsafe {
+        ctx.currently_running_task.as_mut().state = TaskState::Blocked;
+    }
+
+    match SCHEDULER_CTX.lock().irq_wait_queue.entry(irq) {
+        Entry::Vacant(e) => {
+            let mut queue = VecDeque::with_capacity(1);
+            queue.push_back(ctx.currently_running_task);
+            e.insert(queue);
+        }
+        Entry::Occupied(mut e) => e.get_mut().push_back(ctx.currently_running_task),
+    }
+
+    schedule();
 }
 
 pub fn sleep_current_task(time_ms: usize) {
