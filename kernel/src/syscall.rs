@@ -49,6 +49,35 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
             tf.set_syscall_return_value(count);
         }
+        SYSCALL_READ => {
+            let fd = tf.get_arg::<0>();
+            let buf = tf.get_arg::<1>() as *mut u8;
+            let count = tf.get_arg::<2>();
+
+            let this_ctx = unsafe {
+                Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
+                    .as_ref()
+                    .unwrap()
+            };
+
+            let current_task = unsafe { this_ctx.currently_running_task.as_ref() };
+            let file = {
+                let file_table = current_task.file_table.lock();
+                file_table.get_file(fd)
+            };
+
+            let Some(file) = file else {
+                tf.set_syscall_return_value(0);
+                return;
+            };
+
+            let count = file
+                .lock()
+                .read(unsafe { core::slice::from_raw_parts_mut(buf, count) })
+                .unwrap_or(usize::MAX);
+
+            tf.set_syscall_return_value(count);
+        }
         SYSCALL_SLEEP_MS => {
             let time_ms = tf.get_arg::<0>();
             sched::sleep_current_task(time_ms);
