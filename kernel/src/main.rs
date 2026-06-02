@@ -8,6 +8,7 @@ pub type Arch = arch::Riscv;
 extern crate alloc;
 
 mod arch;
+pub mod console;
 mod debug;
 mod driver;
 pub mod error;
@@ -38,7 +39,6 @@ core::arch::global_asm!(include_str!("start.s"));
 
 #[unsafe(no_mangle)]
 extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
-    log::info!("again??? with {hartid} and 0x{dtb_address:x}");
     serial_log::init();
     log::info!("Kernel starts with hart_id: {hartid}, dtb: 0x{dtb_address:x}",);
 
