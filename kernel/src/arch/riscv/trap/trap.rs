@@ -87,8 +87,8 @@ trap_resume:
     ld ra,  0*8(sp)
     ld gp,  2*8(sp)
     ld tp,  3*8(sp)
-    ld t0,  4*8(sp)
-    ld t1,  5*8(sp)
+    // t0 and t1 are restored at the end because trap return needs scratch
+    // registers to decide whether this was a user or kernel trap.
     ld t2,  6*8(sp)
     ld s0,  7*8(sp)
     ld s1,  8*8(sp)
@@ -115,21 +115,34 @@ trap_resume:
     ld t5,  29*8(sp)
     ld t6,  30*8(sp)
 
-    // Restore the stack pointer
+    // Restore the stack pointer to the top of the trap frame.
     addi sp, sp, {TRAPFRAME_SIZE}
-    csrw sscratch, sp
 
-    ld sp, -{READ_SP}(sp)
+    // If saved sstatus.SPP is set, the trap came from supervisor mode.
+    // Kernel traps use sscratch = 0; user traps use sscratch = kernel_sp.
+    ld t0, -{SAVED_SSTATUS_FROM_TOP}(sp)
+    li t1, {SSTATUS_SPP_MASK}
+    and t0, t0, t1
+    bnez t0, ret_kernel
 
-    // if sp != 0, then this is a userspace program and we should return to it, otherwise we must
-    // load the sp back from sscratch and do regular ret
-    bnez sp, ret_userspace
-
-    csrrw sp, sscratch, sp
-    ret
 ret_userspace:
+    csrw sscratch, sp
+    ld t0, -{SAVED_T0_FROM_TOP}(sp)
+    ld t1, -{SAVED_T1_FROM_TOP}(sp)
+    ld sp, -{SAVED_SP_FROM_TOP}(sp)
+    sret
+
+ret_kernel:
+    csrw sscratch, zero
+    ld t0, -{SAVED_T0_FROM_TOP}(sp)
+    ld t1, -{SAVED_T1_FROM_TOP}(sp)
+    ld sp, -{SAVED_SP_FROM_TOP}(sp)
     sret
         "#,
 TRAPFRAME_SIZE = const size_of::<TrapFrame>(),
-READ_SP = const (size_of::<TrapFrame>() - 8),
+SAVED_SP_FROM_TOP = const (size_of::<TrapFrame>() - 1 * 8),
+SAVED_T0_FROM_TOP = const (size_of::<TrapFrame>() - 4 * 8),
+SAVED_T1_FROM_TOP = const (size_of::<TrapFrame>() - 5 * 8),
+SAVED_SSTATUS_FROM_TOP = const (size_of::<TrapFrame>() - 33 * 8),
+SSTATUS_SPP_MASK = const riscv::registers::Sstatus::SPP_MASK,
 );
