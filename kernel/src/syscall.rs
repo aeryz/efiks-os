@@ -88,11 +88,16 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
             tf.set_syscall_return_value(count);
         }
+        Syscall::Shutdown => loop {
+            Arch::halt();
+            core::hint::spin_loop();
+        },
         Syscall::SleepMs => {
             let time_ms = tf.get_arg::<0>();
             sched::sleep_current_task(time_ms);
         }
         Syscall::Spawn => {
+            log::info!("incoming spawn syscall");
             let pid_ptr = tf.get_arg::<0>() as *mut task::Pid;
             let path_ptr = tf.get_arg::<1>() as *const u8;
 
@@ -116,6 +121,10 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                     count += 1;
                 }
             };
+
+            log::info!("spawn path is: {}", unsafe {
+                str::from_utf8_unchecked(path)
+            });
 
             let this_ctx = unsafe {
                 Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
