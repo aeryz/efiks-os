@@ -65,7 +65,7 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
     })
 }
 
-pub fn spawn(path: &[u8], parent: Option<Pid>) -> Result<(), error::Error> {
+pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::Error> {
     let mut address_space = AddressSpace::new_user();
 
     let entry_va = exec::elf::load_executable(path, &mut address_space)?;
@@ -86,8 +86,16 @@ pub fn spawn(path: &[u8], parent: Option<Pid>) -> Result<(), error::Error> {
         VirtualAddress::from_raw(kernel_stack - size_of::<TrapFrameOf<Arch>>()).unwrap(),
     );
 
+    let pid = Pid::create_next();
+
+    let parent = parent.map(|mut p| unsafe {
+        let p = p.as_mut();
+        p.children.push(pid);
+        p.pid
+    });
+
     let task_ptr = task::add_task(Task {
-        pid: Pid::create_next(),
+        pid,
         kernel_sp: VirtualAddress::from_raw(kernel_stack).expect("virtual address is valid"),
         trap_frame: trap_frame_ptr.as_ptr_mut(),
         context,
@@ -102,5 +110,5 @@ pub fn spawn(path: &[u8], parent: Option<Pid>) -> Result<(), error::Error> {
 
     sched::enqueue_new_task(task_ptr);
 
-    Ok(())
+    Ok(pid)
 }
