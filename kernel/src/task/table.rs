@@ -60,4 +60,13 @@ pub fn add_task(task: Task) -> NonNull<Task> {
     task_ptr
 }
 
+/// Returns the task with `pid` if any
+pub fn get_task(pid: Pid) -> Option<NonNull<Task>> {
+    let mut pool = TASK_POOL.0.lock();
+
+    let (slab_idx, idx) = pool.pid_to_idx.get(&pid)?.clone();
+
+    NonNull::new(pool.slabs[slab_idx].get_mut(idx)?)
+}
+
 unsafe impl Sync for TaskPool {}

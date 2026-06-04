@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use alloc::vec::Vec;
 use ksync::SpinLock;
 
 use crate::{
@@ -34,6 +35,10 @@ pub struct Task {
     pub address_space: AddressSpace,
     /// List of open files
     pub file_table: SpinLock<FileTable>,
+    /// Parent of this task
+    pub parent: Option<Pid>,
+    /// Children of this task
+    pub children: Vec<Pid>,
 }
 
 pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
@@ -55,10 +60,12 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         exit_code: -1,
         address_space: ADDRESS_SPACE_EMPTY,
         file_table: SpinLock::new(FileTable::init()),
+        parent: None,
+        children: Vec::new(),
     })
 }
 
-pub fn spawn(path: &[u8]) -> Result<(), error::Error> {
+pub fn spawn(path: &[u8], parent: Option<Pid>) -> Result<(), error::Error> {
     let mut address_space = AddressSpace::new_user();
 
     let entry_va = exec::elf::load_executable(path, &mut address_space)?;
@@ -89,6 +96,8 @@ pub fn spawn(path: &[u8]) -> Result<(), error::Error> {
         exit_code: -1,
         address_space,
         file_table: SpinLock::new(FileTable::init()),
+        parent,
+        children: Vec::new(),
     });
 
     sched::enqueue_new_task(task_ptr);

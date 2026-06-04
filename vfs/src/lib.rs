@@ -17,6 +17,9 @@ use alloc::sync::Arc;
 
 extern crate alloc;
 
+/// Maximum length of a file path
+pub const MAX_FILE_PATH_LENGTH: usize = 255;
+
 /// Size of the smallest block-device transfer supported by the VFS traits.
 pub const SECTOR_SIZE: usize = 512;
 
