@@ -1,8 +1,4 @@
-pub const SYSCALL_WRITE: usize = 1;
-pub const SYSCALL_READ: usize = 2;
-pub const SYSCALL_SLEEP_MS: usize = 3;
-pub const SYSCALL_SHUTDOWN: usize = 4;
-pub const SYSCALL_EXIT: usize = 5;
+const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn };
 
 pub inline fn write(buf: []const u8) isize {
     return syscall_write(buf.ptr, buf.len);
@@ -15,7 +11,7 @@ pub inline fn read(buf: []u8) isize {
 pub fn syscall_write(data_ptr: [*]const u8, len: usize) isize {
     const ret = asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
-        : [number] "{x17}" (SYSCALL_WRITE),
+        : [number] "{x17}" (Syscall.write),
           [fd] "{x10}" (@as(usize, 1)),
           [data_ptr] "{x11}" (@intFromPtr(data_ptr)),
           [len] "{x12}" (len),
@@ -27,7 +23,7 @@ pub fn syscall_write(data_ptr: [*]const u8, len: usize) isize {
 pub fn syscall_read(buf: [*]u8, count: usize) isize {
     const ret = asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
-        : [number] "{x17}" (SYSCALL_READ),
+        : [number] "{x17}" (Syscall.read),
           [fd] "{x10}" (@as(usize, 0)),
           [buf] "{x11}" (@intFromPtr(buf)),
           [count] "{x12}" (count),
@@ -39,7 +35,7 @@ pub fn syscall_read(buf: [*]u8, count: usize) isize {
 pub fn syscall_sleep_ms(ms: usize) void {
     asm volatile ("ecall"
         :
-        : [number] "{x17}" (SYSCALL_SLEEP_MS),
+        : [number] "{x17}" (Syscall.sleep_ms),
           [ms] "{x10}" (ms),
         : .{ .memory = true });
 }
@@ -47,14 +43,25 @@ pub fn syscall_sleep_ms(ms: usize) void {
 pub fn syscall_shutdown() void {
     asm volatile ("ecall"
         :
-        : [number] "{x17}" (SYSCALL_SHUTDOWN),
+        : [number] "{x17}" (Syscall.shutdown),
         : .{ .memory = true });
 }
 
 pub fn syscall_exit(exit_code: i32) void {
     asm volatile ("ecall"
         :
-        : [number] "{x17}" (SYSCALL_EXIT),
+        : [number] "{x17}" (Syscall.exit),
           [exit_code] "{x10}" (exit_code),
         : .{ .memory = true });
+}
+
+pub fn syscall_spawn(path: [*]u8, pid: *usize) isize {
+    const ret = asm volatile ("ecall"
+        : [ret] "={x10}" (-> usize),
+        : [number] "{x17}" (Syscall.spawn),
+          [pid] "{x10}" (@intFromPtr(pid)),
+          [path] "{x11}" (@intFromPtr(path)),
+        : .{ .memory = true });
+
+    return @bitCast(ret);
 }
