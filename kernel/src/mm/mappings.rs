@@ -16,3 +16,7 @@ pub const fn virt_to_phys(virt: usize) -> usize {
 pub const fn phys_to_virt(phys: usize) -> usize {
     phys + KERNEL_DIRECT_MAPPING_BASE.raw()
 }
+
+pub const fn kernel_text_virt_to_phys_raw(virt: usize) -> PhysicalAddress {
+    unsafe { PhysicalAddress::from_raw_unchecked(virt & 0xffff_ffff) }
+}

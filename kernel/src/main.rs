@@ -39,6 +39,8 @@ core::arch::global_asm!(include_str!("start.s"));
 
 #[unsafe(no_mangle)]
 extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
+    mm::early_init();
+
     serial_log::init();
     log::info!("Kernel starts with hart_id: {hartid}, dtb: 0x{dtb_address:x}",);
 

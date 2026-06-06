@@ -3,7 +3,6 @@ target = "riscv64gc-unknown-none-elf"
 
 [target.riscv64gc-unknown-none-elf]
 rustflags = [
-  "-C", "force-unwind-tables=yes",
   "-C", "force-frame-pointers=yes",
 ]
 

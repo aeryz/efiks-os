@@ -53,8 +53,10 @@ pub fn add_task(task: Task) -> NonNull<Task> {
 
     let pid = task.pid;
     let task_idx = slab.insert(task);
+    log::info!("adding task with id: {}", task_idx);
     let task_ptr =
         NonNull::new(slab.get_mut(task_idx).unwrap() as *mut Task).expect("task is nonnull");
+    log::info!("added task with id: {}", task_idx);
     pool.pid_to_idx.insert(pid, (slab_idx, task_idx));
 
     task_ptr
