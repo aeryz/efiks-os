@@ -73,7 +73,7 @@ impl arch::TrapFrame<Riscv> for TrapFrame {
             sp: stack_ptr.into(),
             sstatus: riscv::registers::Sstatus::empty()
                 .enable_user_mode()
-                .enable_supervisor_interrupts()
+                .set_spie()
                 .enable_user_page_access()
                 .raw() as usize,
             ..Default::default()
