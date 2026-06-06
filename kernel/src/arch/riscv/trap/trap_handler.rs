@@ -58,8 +58,11 @@ extern "C" fn trap_handler(trap_frame: &mut TrapFrame) {
             syscall::dispatch_syscall(trap_frame);
         }
         TrapCause::Unknown(trap) => {
+            let fp = trap_frame.s0;
+
             panic!(
-                "unknown trap: {trap} (sepc: 0x{:x}, stval: 0x{:x}, stvec: 0x{:x})",
+                "unknown trap: {trap} (fp: 0x{:x}, sepc: 0x{:x}, stval: 0x{:x}, stvec: 0x{:x})",
+                fp,
                 riscv::registers::Sepc::read().raw(),
                 riscv::registers::Stval::read().raw(),
                 riscv::registers::Stvec::read().raw()

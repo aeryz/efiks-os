@@ -68,7 +68,7 @@ impl PageTableEntry {
     }
 
     #[must_use]
-    pub fn set_flags(mut self, flag: PteFlags) -> Self {
+    pub const fn set_flags(mut self, flag: PteFlags) -> Self {
         self.0 |= flag.bits();
         self
     }
@@ -76,7 +76,7 @@ impl PageTableEntry {
     /// Sets the PPN\[2\], PPN\[1\] and PPN\[0\] to the bits[55:12] of the given
     /// `addr`
     #[must_use]
-    pub fn set_physical_address(mut self, addr: PhysicalAddress) -> Self {
+    pub const fn set_physical_address(mut self, addr: PhysicalAddress) -> Self {
         debug_assert!(
             addr.is_4k_page_aligned(),
             "Physical address must be 4K-aligned"

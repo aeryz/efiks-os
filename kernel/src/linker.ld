@@ -31,12 +31,12 @@ SECTIONS
 
   . = ALIGN(16);
   __kernel_stack_bottom = .;
-  . = . + 0x1000;      /* reserve 4K */
+  . = . + 0x10000;     /* reserve 64K */
   __kernel_stack_top = .;
 
   . = ALIGN(16);
   __stack_bottom = .;
-  . = . + 0x1000;      /* reserve 4K */
+  . = . + 0x10000;     /* reserve 64K */
   __stack_top = .;
 
   . = ALIGN(4K);

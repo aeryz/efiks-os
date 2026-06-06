@@ -49,13 +49,13 @@ unsafe extern "C" {
 pub fn early_init() {
     // TODO(aeryz): We want to have a separate spot for the allocatable memory.
     let memory_start =
-        unsafe { PhysicalAddress::from_raw_unchecked(&__kernel_end as *const u8 as usize) };
+        unsafe { mm::kernel_text_virt_to_phys_raw(&__kernel_end as *const u8 as usize) };
     frame_allocator::init(memory_start);
 
-    let text_end = unsafe { &__text_end as *const u8 as usize };
+    let text_end = unsafe { mm::kernel_text_virt_to_phys_raw(&__text_end as *const u8 as usize) };
     let mut text_start =
-        unsafe { PhysicalAddress::from_raw_unchecked(&__text_start as *const u8 as usize) };
-    let n_text_pages = (text_end - text_start.raw()) / KB + 1;
+        unsafe { mm::kernel_text_virt_to_phys_raw(&__text_start as *const u8 as usize) };
+    let n_text_pages = (text_end.raw() - text_start.raw()) / KB + 1;
 
     let root_pt_ptr = {
         let mut root_pt = KERNEL_ROOT_PAGE_TABLE.lock();
@@ -68,10 +68,10 @@ pub fn early_init() {
             );
             text_start = unsafe { PhysicalAddress::from_raw_unchecked(text_start.raw() + 0x1000) };
         }
-        unsafe { PhysicalAddress::from_raw_unchecked(&*root_pt as *const PageTable as usize) }
+        &*root_pt as *const PageTable as usize
     };
 
-    Arch::set_root_page_table_pa(root_pt_ptr);
+    Arch::set_root_page_table_pa(mm::kernel_text_virt_to_phys_raw(root_pt_ptr));
 
     // 64K kernel heap
     {
@@ -84,10 +84,8 @@ pub fn early_init() {
         let end_addr = frame_allocator::alloc_frame().unwrap();
 
         kernel_allocator::init(
-            VirtualAddress::from_raw(start_addr.raw() + mm::KERNEL_DIRECT_MAPPING_BASE.raw())
-                .unwrap(),
-            VirtualAddress::from_raw(end_addr.raw() + 4096 + mm::KERNEL_DIRECT_MAPPING_BASE.raw())
-                .unwrap(),
+            VirtualAddress::from_raw(mm::phys_to_virt(start_addr.raw())).unwrap(),
+            VirtualAddress::from_raw(mm::phys_to_virt(end_addr.raw()) + 4096).unwrap(),
         );
     }
 
