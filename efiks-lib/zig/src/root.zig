@@ -1,4 +1,4 @@
-const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn };
+const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait };
 
 pub inline fn write(buf: []const u8) isize {
     return syscall_write(buf.ptr, buf.len);
@@ -61,6 +61,15 @@ pub fn syscall_spawn(path: [*]u8, pid: *usize) isize {
         : [number] "{x17}" (Syscall.spawn),
           [pid] "{x10}" (@intFromPtr(pid)),
           [path] "{x11}" (@intFromPtr(path)),
+        : .{ .memory = true });
+
+    return @bitCast(ret);
+}
+
+pub fn syscall_wait() isize {
+    const ret = asm volatile ("ecall"
+        : [ret] "={x10}" (-> usize),
+        : [number] "{x17}" (Syscall.wait),
         : .{ .memory = true });
 
     return @bitCast(ret);
