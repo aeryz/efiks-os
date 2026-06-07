@@ -4,15 +4,15 @@ use alloc::vec::Vec;
 use ksync::SpinLock;
 
 use crate::{
+    Arch,
     arch::{
-        mmu::VirtualAddress, Architecture, Context, ContextOf, TrapFrame, TrapFrameOf,
-        VirtualAddressOf,
+        Architecture, Context, ContextOf, TrapFrame, TrapFrameOf, VirtualAddressOf,
+        mmu::VirtualAddress,
     },
     error, exec,
     mm::{self, KERNEL_DIRECT_MAPPING_BASE},
     sched,
-    task::{self, file_table::FileTable, AddressSpace, Pid, TaskState, ADDRESS_SPACE_EMPTY},
-    Arch,
+    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState, file_table::FileTable},
 };
 
 #[repr(C)]
@@ -127,19 +127,15 @@ pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
 }
 
 pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
-    log::info!("in task wait");
     let task = unsafe { task_ptr.as_mut() };
 
     if task.children.is_empty() {
-        log::info!("children is empty");
         return Ok(());
     }
 
     if reap_zombie_child(task) {
         return Ok(());
     }
-
-    log::info!("children is not empty");
 
     task.state = TaskState::Blocked;
 
