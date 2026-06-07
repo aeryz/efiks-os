@@ -1,8 +1,9 @@
 use core::ptr;
 
 use crate::{
+    Arch,
     arch::{Architecture, TrapFrame, TrapFrameOf},
-    percpu, sched, task, Arch,
+    percpu, sched, task,
 };
 
 #[repr(usize)]
@@ -121,7 +122,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                 }
             };
 
-            log::info!("spawn path is: {}", unsafe {
+            log::trace!("spawn path is: {}", unsafe {
                 str::from_utf8_unchecked(path)
             });
 
@@ -156,7 +157,6 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             tf.set_syscall_return_value(0);
         }
         Syscall::Wait => {
-            log::info!("will wait");
             let task = unsafe {
                 Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
                     .as_mut()
