@@ -4,15 +4,15 @@ use alloc::vec::Vec;
 use ksync::SpinLock;
 
 use crate::{
-    Arch,
     arch::{
-        Architecture, Context, ContextOf, TrapFrame, TrapFrameOf, VirtualAddressOf,
-        mmu::VirtualAddress,
+        mmu::VirtualAddress, Architecture, Context, ContextOf, TrapFrame, TrapFrameOf,
+        VirtualAddressOf,
     },
     error, exec,
     mm::{self, KERNEL_DIRECT_MAPPING_BASE},
     sched,
-    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState, file_table::FileTable},
+    task::{self, file_table::FileTable, AddressSpace, Pid, TaskState, ADDRESS_SPACE_EMPTY},
+    Arch,
 };
 
 #[repr(C)]
@@ -111,4 +111,62 @@ pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::E
     sched::enqueue_new_task(task_ptr);
 
     Ok(pid)
+}
+
+// TODO(aeryz): no sync mechanism for tasks this is scary
+pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
+    let task = unsafe { task_ptr.as_mut() };
+    if task.state == TaskState::Exited {
+        return;
+    }
+
+    task.state = TaskState::Zombie;
+    task.exit_code = exit_code;
+
+    sched::on_task_exit(task_ptr);
+}
+
+pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
+    log::info!("in task wait");
+    let task = unsafe { task_ptr.as_mut() };
+
+    if task.children.is_empty() {
+        log::info!("children is empty");
+        return Ok(());
+    }
+
+    if reap_zombie_child(task) {
+        return Ok(());
+    }
+
+    log::info!("children is not empty");
+
+    task.state = TaskState::Blocked;
+
+    sched::block_on_wait(task_ptr);
+
+    reap_zombie_child(task);
+
+    Ok(())
+}
+
+fn reap_zombie_child(task: &mut Task) -> bool {
+    let Some(child_idx) = task.children.iter().position(|pid| {
+        let Some(child) = task::get_task(*pid) else {
+            return false;
+        };
+
+        unsafe { child.as_ref().state == TaskState::Zombie }
+    }) else {
+        return false;
+    };
+
+    let child_pid = task.children.remove(child_idx);
+    if let Some(mut child) = task::get_task(child_pid) {
+        unsafe {
+            child.as_mut().state = TaskState::Exited;
+        }
+    }
+
+    true
 }

@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use alloc::{
     collections::{
         btree_map::{BTreeMap, Entry},
+        btree_set::BTreeSet,
         vec_deque::VecDeque,
     },
     vec::Vec,
@@ -10,20 +11,23 @@ use alloc::{
 use ksync::SpinLock;
 
 use crate::{
-    Arch,
     arch::{Architecture, ContextOf, TrapFrame},
     percpu::{self, PerCoreContext},
-    task::{Task, TaskState},
+    task::{self, Task, TaskState},
+    Arch,
 };
 
 static SCHEDULER_CTX: SpinLock<GlobalScheduler> = SpinLock::new(GlobalScheduler {
     last_rq_hart_idx: 0,
     irq_wait_queue: BTreeMap::new(),
+    waiting_tasks: BTreeSet::new(),
 });
 
 pub struct GlobalScheduler {
     last_rq_hart_idx: usize,
     irq_wait_queue: BTreeMap<u32, VecDeque<NonNull<Task>>>,
+    /// The set of tasks that are blocked on `wait`
+    waiting_tasks: BTreeSet<NonNull<Task>>,
 }
 
 unsafe impl Send for GlobalScheduler {}
@@ -75,7 +79,12 @@ pub fn schedule() {
             ctx.currently_running_task = NonNull::new(new_task).expect("the task is nonnull");
 
             unsafe {
-                if current_task.as_ref().state == TaskState::Ready && current_task != ctx.idle_task
+                let current_task_ref = current_task.as_mut();
+                if current_task != ctx.idle_task && current_task_ref.state == TaskState::Running {
+                    current_task_ref.state = TaskState::Ready;
+                    sched.runqueue.push_back(current_task);
+                } else if current_task != ctx.idle_task
+                    && current_task_ref.state == TaskState::Ready
                 {
                     sched.runqueue.push_back(current_task);
                 }
@@ -101,7 +110,7 @@ pub fn schedule() {
             // If there are no tasks that we can run and the currently running task can
             // continue to be run, we just run it. This also covers if the
             // current_task is the idle task.
-            if current_task.state == TaskState::Ready {
+            if matches!(current_task.state, TaskState::Ready | TaskState::Running) {
                 log::trace!("current task is still ready, we don't switch to the idle task");
                 // TODO(aeryz): set last entrance time??
                 current_task.state = TaskState::Running;
@@ -258,6 +267,27 @@ pub fn block_on_external_irq(irq: u32) {
         Entry::Occupied(mut e) => e.get_mut().push_back(ctx.currently_running_task),
     }
 
+    schedule();
+}
+
+pub fn block_on_wait(task: NonNull<Task>) {
+    log::info!("blocking on wait");
+    SCHEDULER_CTX.lock().waiting_tasks.insert(task);
+    schedule();
+}
+
+pub fn on_task_exit(task_ptr: NonNull<Task>) {
+    let parent = unsafe { task_ptr.as_ref().parent.map(|p| task::get_task(p)) };
+    let Some(Some(mut parent)) = parent else {
+        return;
+    };
+
+    if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent) {
+        unsafe {
+            parent.as_mut().state = TaskState::Ready;
+        }
+        enqueue_new_task(parent);
+    }
     schedule();
 }
 

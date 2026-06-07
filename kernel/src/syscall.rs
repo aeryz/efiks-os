@@ -1,9 +1,8 @@
 use core::ptr;
 
 use crate::{
-    Arch,
     arch::{Architecture, TrapFrame, TrapFrameOf},
-    percpu, sched, task,
+    percpu, sched, task, Arch,
 };
 
 #[repr(usize)]
@@ -14,6 +13,7 @@ pub enum Syscall {
     Shutdown,
     Exit,
     Spawn,
+    Wait,
     End,
 }
 
@@ -97,7 +97,6 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             sched::sleep_current_task(time_ms);
         }
         Syscall::Spawn => {
-            log::info!("incoming spawn syscall");
             let pid_ptr = tf.get_arg::<0>() as *mut task::Pid;
             let path_ptr = tf.get_arg::<1>() as *const u8;
 
@@ -142,13 +141,35 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                 };
             }
 
-            unsafe {
-                this_ctx.currently_running_task.as_mut().state = task::TaskState::Blocked;
-            }
-
             tf.set_syscall_return_value(0);
+        }
+        Syscall::Exit => {
+            let exit_code = tf.get_arg::<0>() as i32;
 
-            sched::schedule();
+            let task = unsafe {
+                Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
+                    .as_mut()
+                    .unwrap()
+                    .currently_running_task
+            };
+            task::exit(task, exit_code);
+            tf.set_syscall_return_value(0);
+        }
+        Syscall::Wait => {
+            log::info!("will wait");
+            let task = unsafe {
+                Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
+                    .as_mut()
+                    .unwrap()
+                    .currently_running_task
+            };
+
+            let ret = match task::wait(task) {
+                Ok(_) => 0,
+                Err(_) => usize::MAX,
+            };
+
+            tf.set_syscall_return_value(ret);
         }
         _ => unreachable!(),
     }
