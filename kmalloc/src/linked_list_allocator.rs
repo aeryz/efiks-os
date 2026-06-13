@@ -1,7 +1,20 @@
-//! ## Linked list allocator
+//! # Linked list allocator
+//!
+//! ## Layout
+//! ```
+//! [ header ][ maybe padding ][ back offset ][ data ]
+//! ```
+//! - **header**: Metadata of this node.
+//! - **maybe padding**: Padding to satisfy the alignment of `data`.
+//! - **back offset**: Having a pointer to `data`, the allocator needs to be
+//!   able to access to `Header` to be able to free this node. Hence, the `back
+//!   offset` is used to tell the allocator how far back the `header` is from
+//!   the `data`.
+//! - **data**: Data itself.
 
 use core::{
     alloc::{GlobalAlloc, Layout},
+    mem::align_of,
     ptr::NonNull,
 };
 
@@ -40,7 +53,36 @@ impl KernelAllocator for LinkedListAllocator {
     }
 }
 
+impl LinkedListAllocator {
+    // For debugging only
+    #[allow(unused)]
+    fn traverse(&self) {
+        let mut total_size = 0;
+        let mut cur_node_ptr = self.head.cast_const();
+
+        while cur_node_ptr != core::ptr::null() {
+            let header: &Header = unsafe { cur_node_ptr.as_ref().unwrap() };
+            log::info!(
+                "header: {cur_node_ptr:?}\n\t- sz: {}\n\t- free: {}\n\t- next: {:?}",
+                header.sz,
+                header.free,
+                header.next.unwrap_or(core::ptr::null_mut())
+            );
+            total_size += header.sz;
+            cur_node_ptr = header.next.unwrap_or(core::ptr::null_mut()).cast_const();
+        }
+
+        if total_size != self.end_addr - self.start_addr {
+            panic!(
+                "expected the traversed size ({total_size}) to match the total size: {}",
+                self.end_addr - self.start_addr,
+            );
+        }
+    }
+}
+
 unsafe impl GlobalAlloc for LinkedListAllocator {
+    /// See the module docs to see the exact layout.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let mut cur_node_ptr = self.head;
 
@@ -48,20 +90,31 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
             let cur_node = unsafe { cur_node_ptr.as_mut().unwrap() };
 
             let header_start = cur_node_ptr as usize;
+
+            // data is aligned to it's own alignment, the extra `usize` comes from the back
+            // offset
             let data_start = crate::align_up(
                 header_start + size_of::<Header>() + size_of::<usize>(),
                 layout.align(),
             );
             let back_offset_pos = data_start - size_of::<usize>();
+            // tells us how far back the metadata is so that we can free.
             let back_offset = data_start - header_start;
 
-            let alloc_size = back_offset + layout.size();
+            // Make `alloc_size` aligned for `Header` so that it the next header is being
+            // put in an aligned position.
+            let alloc_size = crate::align_up(back_offset + layout.size(), align_of::<Header>());
 
             if cur_node.free && cur_node.sz >= alloc_size {
                 let prev_sz = cur_node.sz;
                 let remaining = prev_sz - alloc_size;
 
-                if remaining >= (size_of::<Header>() + size_of::<usize>()) {
+                if remaining
+                    >= crate::align_up(
+                        size_of::<Header>() + size_of::<usize>() + 1,
+                        align_of::<Header>(),
+                    )
+                {
                     cur_node.sz = alloc_size;
                     cur_node.free = false;
 
@@ -121,7 +174,7 @@ mod tests {
     use core::{
         alloc::{AllocError, Allocator, GlobalAlloc, Layout},
         mem::align_of,
-        ptr::{self, NonNull},
+        ptr::NonNull,
     };
     use std::prelude::v1::*;
     use std::{

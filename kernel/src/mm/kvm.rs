@@ -73,12 +73,12 @@ pub fn early_init() {
 
     Arch::set_root_page_table_pa(mm::kernel_text_virt_to_phys_raw(root_pt_ptr));
 
-    // 64K kernel heap
+    // 192K kernel heap
     {
         // TODO(aeryz): This depends on the assumption that the frame allocator will
         // provide contiguous memory
         let start_addr = frame_allocator::alloc_frame().unwrap();
-        for _ in 0..14 {
+        for _ in 0..46 {
             let _ = frame_allocator::alloc_frame().unwrap();
         }
         let end_addr = frame_allocator::alloc_frame().unwrap();

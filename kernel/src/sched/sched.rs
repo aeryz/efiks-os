@@ -11,10 +11,10 @@ use alloc::{
 use ksync::SpinLock;
 
 use crate::{
+    Arch,
     arch::{Architecture, ContextOf, TrapFrame},
     percpu::{self, PerCoreContext},
     task::{self, Task, TaskState},
-    Arch,
 };
 
 static SCHEDULER_CTX: SpinLock<GlobalScheduler> = SpinLock::new(GlobalScheduler {
@@ -271,7 +271,7 @@ pub fn block_on_external_irq(irq: u32) {
 }
 
 pub fn block_on_wait(task: NonNull<Task>) {
-    log::info!("blocking on wait");
+    log::trace!("blocking on wait");
     SCHEDULER_CTX.lock().waiting_tasks.insert(task);
     schedule();
 }

@@ -2,7 +2,7 @@ use ksync::SpinLock;
 
 use crate::arch::mmu::PhysicalAddress;
 
-static FRAME_ALLOCATOR: SpinLock<FrameAllocator<16>> = SpinLock::new(FrameAllocator::new(unsafe {
+static FRAME_ALLOCATOR: SpinLock<FrameAllocator<64>> = SpinLock::new(FrameAllocator::new(unsafe {
     PhysicalAddress::from_raw_unchecked(0)
 }));
 
@@ -53,10 +53,10 @@ impl<const N: usize> FrameAllocator<N> {
     #[must_use]
     fn alloc(&mut self) -> Result<PhysicalAddress, ()> {
         for page_i in 0..self.pages.len() {
-            for i in 0..(usize::BITS as usize) {
+            for i in 0..(u64::BITS as usize) {
                 if (self.pages[page_i] >> i) & 1 == 0 {
                     self.pages[page_i] |= 1 << i;
-                    let alloc_addr = (page_i * size_of::<usize>() + i) * 4096;
+                    let alloc_addr = (page_i * u64::BITS as usize + i) * 4096;
                     // Safety:
                     // - TODO: we must guarantee that the allocator is properly configured s.t.
                     // we can't produce an out of bounds physical address

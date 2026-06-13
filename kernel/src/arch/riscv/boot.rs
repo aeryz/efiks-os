@@ -7,18 +7,19 @@ use crate::{
 
 static EARLY_PT: PageTable = {
     let mut page_table = PageTable::empty();
-    let pte = PageTableEntry::empty()
-        .set_flags(PteFlags::V.union(PteFlags::RWX).union(PteFlags::A).union(PteFlags::D));
+    let pte = PageTableEntry::empty().set_flags(
+        PteFlags::V
+            .union(PteFlags::RWX)
+            .union(PteFlags::A)
+            .union(PteFlags::D),
+    );
 
     page_table.set_entry(
         (mm::KERNEL_IMAGE_START_PA.raw() >> 30) & 0x1ff,
         pte.set_physical_address(mm::KERNEL_IMAGE_START_PA),
     );
 
-    page_table.set_entry(
-        510,
-        pte.set_physical_address(mm::KERNEL_IMAGE_START_PA),
-    );
+    page_table.set_entry(510, pte.set_physical_address(mm::KERNEL_IMAGE_START_PA));
 
     page_table.set_entry(
         511,

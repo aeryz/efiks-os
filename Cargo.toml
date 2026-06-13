@@ -13,3 +13,4 @@ kmalloc = { path = "./kmalloc", default-features = false }
 bitflags = "2.11.0"
 vsfs = { path = "./vsfs", default-features = false }
 vfs = { path = "./vfs", default-features = false }
+log = "0.4.29"

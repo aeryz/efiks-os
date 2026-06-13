@@ -45,7 +45,6 @@ export fn _start() noreturn {
             var pid: usize = 0;
             // TODO(aeryz): proper errcode or `errno`?
             _ = efiks.syscall_spawn(@ptrCast(path), &pid);
-            _ = efiks.write("called spawn");
             if (pid != 0) {
                 _ = efiks.syscall_wait();
                 _ = efiks.write("child finished execution.");

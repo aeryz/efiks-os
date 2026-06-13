@@ -8,7 +8,7 @@ edition.workspace = true
 bitflags = { workspace = true }
 riscv = { workspace = true }
 ksync = { workspace = true }
-log = "0.4.29"
+log = { workspace = true }
 kmalloc = { workspace = true }
 vfs = { workspace = true }
 vsfs = { workspace = true }
