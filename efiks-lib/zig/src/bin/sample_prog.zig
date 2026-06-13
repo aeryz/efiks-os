@@ -47,8 +47,14 @@ export fn _start() noreturn {
             _ = efiks.syscall_spawn(@ptrCast(path), &pid);
             if (pid != 0) {
                 _ = efiks.syscall_wait();
-                _ = efiks.write("child finished execution.");
+                _ = efiks.write("child finished execution.\n");
             }
+        } else if (eql(cmd, "exit")) {
+            _ = efiks.syscall_exit(0);
+        } else {
+            _ = efiks.write("command ");
+            _ = efiks.write(cmd);
+            _ = efiks.write(" not found.\n");
         }
     }
 }

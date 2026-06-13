@@ -278,16 +278,15 @@ pub fn block_on_wait(task: NonNull<Task>) {
 
 pub fn on_task_exit(task_ptr: NonNull<Task>) {
     let parent = unsafe { task_ptr.as_ref().parent.map(|p| task::get_task(p)) };
-    let Some(Some(mut parent)) = parent else {
-        return;
+    if let Some(Some(mut parent)) = parent {
+        if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent) {
+            unsafe {
+                parent.as_mut().state = TaskState::Ready;
+            }
+            enqueue_new_task(parent);
+        }
     };
 
-    if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent) {
-        unsafe {
-            parent.as_mut().state = TaskState::Ready;
-        }
-        enqueue_new_task(parent);
-    }
     schedule();
 }
 
