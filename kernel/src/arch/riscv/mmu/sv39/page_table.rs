@@ -58,6 +58,45 @@ impl PageTable {
         }
     }
 
+    pub fn traverse_free(root_pt: PhysicalAddress) {
+        let root = mm::phys_to_virt(root_pt.raw()) as *const PageTable;
+        for pte in unsafe { root.as_ref().unwrap().0 } {
+            if !pte.is_valid() || pte.is_leaf() {
+                continue;
+            }
+
+            // child page table
+            let child = pte.physical_address();
+            Self::traverse_free(child);
+        }
+
+        mm::free_frame(root_pt);
+    }
+
+    pub fn traverse_mut(&mut self, base: usize, cb: fn(leaf_pt: *mut PageTable)) {
+        self.recursive_traverse_mut(base, 3, cb);
+    }
+
+    fn recursive_traverse_mut(
+        &mut self,
+        base: usize,
+        depth: usize,
+        cb: fn(leaf_pt: *mut PageTable),
+    ) {
+        for pte in &mut self.0 {
+            if !pte.is_valid() || pte.is_leaf() {
+                continue;
+            }
+
+            let pt = (pte.physical_address().raw() + base) as *mut PageTable;
+            unsafe {
+                pt.as_mut()
+                    .unwrap()
+                    .recursive_traverse_mut(base, depth - 1, cb);
+            }
+        }
+    }
+
     fn map_memory_with_base(
         &mut self,
         va: VirtualAddress,

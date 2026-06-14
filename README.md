@@ -69,7 +69,7 @@ cargo run
 
 ### Run the OS
 ```
-RUST_LOG=info cargo b -p kernel
+RUST_LOG=info cargo b -p kernel \
   && qemu-system-riscv64 \
     -smp 4 \
     -nographic \

@@ -63,6 +63,11 @@ impl PageTableEntry {
     }
 
     #[must_use]
+    pub const fn is_leaf(&self) -> bool {
+        self.is_valid() && (self.0 & PteFlags::RWX.bits() != 0)
+    }
+
+    #[must_use]
     pub const fn is_valid(&self) -> bool {
         self.0 & PteFlags::V.bits() == 1
     }
