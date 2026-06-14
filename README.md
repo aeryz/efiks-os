@@ -57,15 +57,28 @@ nix develop
 nix build .#opensbi
 ```
 
+### Create a file image based on a subdirectory you have
+```
+cargo run
+  -p vsfs \
+  --features host-tool \
+  --bin tool \
+  --target x86_64-unknown-linux-gnu \
+  -- --root SUBDIR --output vsfs.img
+```
+
 ### Run the OS
 ```
-RUST_LOG=info cargo b \
+RUST_LOG=info cargo b -p kernel
   && qemu-system-riscv64 \
-      -smp 4 \
-      -nographic \
-      -machine virt \
-      -bios ./result/share/opensbi/lp64/generic/firmware/fw_dynamic.bin \
-      -kernel target/riscv64gc-unknown-none-elf/release/kernel
+    -smp 4 \
+    -nographic \
+    -machine virt \
+    -bios ./result/share/opensbi/lp64/generic/firmware/fw_dynamic.bin \
+    -kernel target/riscv64gc-unknown-none-elf/debug/kernel \
+    -drive file=vsfs.img,format=raw,if=none,id=blk0,cache=none \
+    -device virtio-blk-device,drive=blk0 \
+    -global virtio-mmio.force-legacy=false
 ```
 
 ## Resources
