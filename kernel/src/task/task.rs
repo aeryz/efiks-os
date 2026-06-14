@@ -123,6 +123,14 @@ pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
     task.state = TaskState::Zombie;
     task.exit_code = exit_code;
 
+    task.file_table.lock().destroy();
+    task.address_space.free();
+    task.children = Vec::new();
+    // TODO(aeryz): We cannot free the kernel stack here but we need to free it
+    // somewhere. The biggest problem is how we are going to free the whole task.
+    // For the kernel stack at least, we can create a reaper process but I'm not
+    // sure what's the best way to free the whole task yet.
+
     sched::on_task_exit(task_ptr);
 }
 

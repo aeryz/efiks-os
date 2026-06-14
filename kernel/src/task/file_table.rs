@@ -20,6 +20,11 @@ impl FileTable {
     pub fn get_file(&self, fd: usize) -> Option<FileRef> {
         self.0.get(fd)?.clone()
     }
+
+    pub fn destroy(&mut self) {
+        // `Vec::new` has an initial capacity of 0
+        self.0 = Vec::new();
+    }
 }
 
 #[derive(Clone)]

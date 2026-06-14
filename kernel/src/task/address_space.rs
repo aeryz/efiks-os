@@ -120,6 +120,24 @@ impl AddressSpace {
         };
     }
 
+    /// Frees up all the memory and removes all the internal refs.
+    pub fn free(&mut self) {
+        for r in &self.regions {
+            let pa = self.translate(r.start).unwrap();
+            mm::free_frame(pa);
+        }
+
+        // Vec::new as a capacity of 0
+        self.regions = Vec::new();
+
+        // TODO: we still need to free the page tables one thing im confused
+        // about is that there are 3-levels of page tables meaning there could
+        // be hundreds of thousands of them technically laying around. So
+        // obviously we can't iterate on all of them to figure out what's
+        // reserved. I'm thinking we could have a list of active pages in
+        // memory.
+    }
+
     pub fn translate(&self, va: VirtualAddressOf<Arch>) -> Option<PhysicalAddressOf<Arch>> {
         unsafe { (*self.root_pt_ptr()).translate(va) }
     }
