@@ -12,7 +12,10 @@ use crate::{
     error, exec,
     mm::{self, KERNEL_DIRECT_MAPPING_BASE},
     sched,
-    task::{self, ADDRESS_SPACE_EMPTY, AddressSpace, Pid, TaskState, file_table::FileTable},
+    task::{
+        self, ADDRESS_SPACE_EMPTY, AddressSpace, AtomicTaskState, Pid, TaskState,
+        file_table::FileTable,
+    },
 };
 
 #[repr(C)]
@@ -25,7 +28,7 @@ pub struct Task {
     /// Pointer to the context
     pub context: ContextOf<Arch>,
     /// The current state of the process
-    pub state: TaskState,
+    pub state: AtomicTaskState,
     /// Wake up time in ticks
     pub wake_up_at: usize,
     // TODO(aeryz): We can consider putting this exit code into the relevant state enum
@@ -55,7 +58,7 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         kernel_sp,
         trap_frame: core::ptr::null_mut(),
         context,
-        state: TaskState::Ready,
+        state: TaskState::Ready.into(),
         wake_up_at: 0,
         exit_code: -1,
         address_space: ADDRESS_SPACE_EMPTY,
@@ -99,7 +102,7 @@ pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::E
         kernel_sp: VirtualAddress::from_raw(kernel_stack).expect("virtual address is valid"),
         trap_frame: trap_frame_ptr.as_ptr_mut(),
         context,
-        state: TaskState::Ready,
+        state: TaskState::Ready.into(),
         wake_up_at: 0,
         exit_code: -1,
         address_space,
@@ -120,7 +123,7 @@ pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
         return;
     }
 
-    task.state = TaskState::Zombie;
+    task.state = TaskState::Zombie.into();
     task.exit_code = exit_code;
 
     task.file_table.lock().destroy();
@@ -145,7 +148,7 @@ pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
         return Ok(());
     }
 
-    task.state = TaskState::Blocked;
+    task.state = TaskState::Blocked.into();
 
     sched::block_on_wait(task_ptr);
 
@@ -168,7 +171,7 @@ fn reap_zombie_child(task: &mut Task) -> bool {
     let child_pid = task.children.remove(child_idx);
     if let Some(mut child) = task::get_task(child_pid) {
         unsafe {
-            child.as_mut().state = TaskState::Exited;
+            child.as_mut().state = TaskState::Exited.into();
         }
     }
 

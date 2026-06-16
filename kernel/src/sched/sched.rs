@@ -74,14 +74,14 @@ pub fn schedule() {
             let mut current_task = ctx.currently_running_task;
 
             let new_task = unsafe { task.as_mut() };
-            new_task.state = TaskState::Running;
+            new_task.state.set(TaskState::Running);
 
             ctx.currently_running_task = NonNull::new(new_task).expect("the task is nonnull");
 
             unsafe {
                 let current_task_ref = current_task.as_mut();
                 if current_task != ctx.idle_task && current_task_ref.state == TaskState::Running {
-                    current_task_ref.state = TaskState::Ready;
+                    current_task_ref.state.set(TaskState::Ready);
                     sched.runqueue.push_back(current_task);
                 } else if current_task != ctx.idle_task
                     && current_task_ref.state == TaskState::Ready
@@ -110,17 +110,20 @@ pub fn schedule() {
             // If there are no tasks that we can run and the currently running task can
             // continue to be run, we just run it. This also covers if the
             // current_task is the idle task.
-            if matches!(current_task.state, TaskState::Ready | TaskState::Running) {
+            if matches!(
+                current_task.state.raw(),
+                TaskState::Ready | TaskState::Running
+            ) {
                 log::trace!("current task is still ready, we don't switch to the idle task");
                 // TODO(aeryz): set last entrance time??
-                current_task.state = TaskState::Running;
+                current_task.state.set(TaskState::Running);
                 return;
             }
             log::trace!("current task is not ready, we are gonna switch to idle task");
 
             ctx.currently_running_task = ctx.idle_task;
             let idle_task = unsafe { ctx.idle_task.as_mut() };
-            idle_task.state = TaskState::Running;
+            idle_task.state.set(TaskState::Running);
             log::trace!("idle task is set to running");
 
             sched.last_entrance_time = Arch::read_current_time();
@@ -182,7 +185,7 @@ pub fn on_timer_interrupt() {
                         "task should wake up at: {} and the cur is {current_time}, so we switch",
                         task.wake_up_at
                     );
-                    task.state = TaskState::Ready;
+                    task.state.set(TaskState::Ready);
                     some_task_woke_up = true;
                     true
                 } else {
@@ -224,24 +227,19 @@ pub fn on_timer_interrupt() {
 pub fn on_external_irq(irq: u32) {
     let mut task = {
         let mut scheduler_ctx = SCHEDULER_CTX.lock();
-        log::trace!("checking if there is a wait queue");
         let Some(queue) = scheduler_ctx.irq_wait_queue.get_mut(&irq) else {
             return;
         };
-        log::trace!("yes there is");
 
         let Some(task) = queue.pop_front() else {
             return;
         };
-        log::trace!("yes there is a task");
 
         task
     };
 
-    log::trace!("enqueueuing");
-
     unsafe {
-        task.as_mut().state = TaskState::Ready;
+        task.as_mut().state.set(TaskState::Ready);
     }
     enqueue_new_task(task);
 }
@@ -255,7 +253,10 @@ pub fn block_on_external_irq(irq: u32) {
     };
 
     unsafe {
-        ctx.currently_running_task.as_mut().state = TaskState::Blocked;
+        ctx.currently_running_task
+            .as_mut()
+            .state
+            .set(TaskState::Blocked);
     }
 
     match SCHEDULER_CTX.lock().irq_wait_queue.entry(irq) {
@@ -281,7 +282,7 @@ pub fn on_task_exit(task_ptr: NonNull<Task>) {
     if let Some(Some(mut parent)) = parent {
         if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent) {
             unsafe {
-                parent.as_mut().state = TaskState::Ready;
+                parent.as_mut().state.set(TaskState::Ready);
             }
             enqueue_new_task(parent);
         }
@@ -298,7 +299,7 @@ pub fn sleep_current_task(time_ms: usize) {
     };
 
     let current_task = unsafe { ctx.currently_running_task.as_mut() };
-    current_task.state = TaskState::Sleeping;
+    current_task.state.set(TaskState::Sleeping);
     // Setting an invalid time s.t. it overflows will result in this task to be
     // immediately woken up after a single time slice TODO(aeryz): check posix
     // to see how they handle overflows
