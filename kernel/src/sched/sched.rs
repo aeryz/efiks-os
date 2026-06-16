@@ -180,10 +180,11 @@ pub fn on_timer_interrupt() {
         while i < scheduler.sleeping_tasks.len() {
             let should_remove = {
                 let task = unsafe { scheduler.sleeping_tasks[i].as_mut() };
-                if current_time >= task.wake_up_at {
+                let wake_up_at = task.runtime.lock().wake_up_at;
+                if current_time >= wake_up_at {
                     log::trace!(
                         "task should wake up at: {} and the cur is {current_time}, so we switch",
-                        task.wake_up_at
+                        wake_up_at
                     );
                     task.state.set(TaskState::Ready);
                     some_task_woke_up = true;
@@ -278,7 +279,14 @@ pub fn block_on_wait(task: NonNull<Task>) {
 }
 
 pub fn on_task_exit(task_ptr: NonNull<Task>) {
-    let parent = unsafe { task_ptr.as_ref().parent.map(|p| task::get_task(p)) };
+    let parent = unsafe {
+        task_ptr
+            .as_ref()
+            .runtime
+            .lock()
+            .parent
+            .map(|p| task::get_task(p))
+    };
     if let Some(Some(mut parent)) = parent {
         if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent) {
             unsafe {
@@ -303,7 +311,7 @@ pub fn sleep_current_task(time_ms: usize) {
     // Setting an invalid time s.t. it overflows will result in this task to be
     // immediately woken up after a single time slice TODO(aeryz): check posix
     // to see how they handle overflows
-    current_task.wake_up_at = Arch::read_current_time()
+    current_task.runtime.lock().wake_up_at = Arch::read_current_time()
         .checked_add(Arch::nanos_to_ticks(
             time_ms.checked_mul(1_000_000).unwrap_or(0),
         ))

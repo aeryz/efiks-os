@@ -29,19 +29,24 @@ pub struct Task {
     pub context: ContextOf<Arch>,
     /// The current state of the process
     pub state: AtomicTaskState,
-    /// Wake up time in ticks
-    pub wake_up_at: usize,
-    // TODO(aeryz): We can consider putting this exit code into the relevant state enum
-    /// Process exit code
-    pub exit_code: i32,
     /// Address space
     pub address_space: AddressSpace,
     /// List of open files
     pub file_table: SpinLock<FileTable>,
+    pub runtime: SpinLock<TaskRuntime>,
+}
+
+#[repr(C)]
+pub struct TaskRuntime {
     /// Parent of this task
     pub parent: Option<Pid>,
     /// Children of this task
     pub children: Vec<Pid>,
+    /// Process exit code
+    pub exit_code: i32,
+    // TODO(aeryz): this might go into sched state as well
+    /// Wake up time in ticks
+    pub wake_up_at: usize,
 }
 
 pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
@@ -59,12 +64,14 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
         trap_frame: core::ptr::null_mut(),
         context,
         state: TaskState::Ready.into(),
-        wake_up_at: 0,
-        exit_code: -1,
         address_space: ADDRESS_SPACE_EMPTY,
         file_table: SpinLock::new(FileTable::init()),
-        parent: None,
-        children: Vec::new(),
+        runtime: SpinLock::new(TaskRuntime {
+            parent: None,
+            children: Vec::new(),
+            exit_code: -1,
+            wake_up_at: 0,
+        }),
     })
 }
 
@@ -93,7 +100,7 @@ pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::E
 
     let parent = parent.map(|mut p| unsafe {
         let p = p.as_mut();
-        p.children.push(pid);
+        p.runtime.lock().children.push(pid);
         p.pid
     });
 
@@ -103,12 +110,14 @@ pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::E
         trap_frame: trap_frame_ptr.as_ptr_mut(),
         context,
         state: TaskState::Ready.into(),
-        wake_up_at: 0,
-        exit_code: -1,
         address_space,
         file_table: SpinLock::new(FileTable::init()),
-        parent,
-        children: Vec::new(),
+        runtime: SpinLock::new(TaskRuntime {
+            parent,
+            children: Vec::new(),
+            exit_code: -1,
+            wake_up_at: 0,
+        }),
     });
 
     sched::enqueue_new_task(task_ptr);
@@ -124,11 +133,11 @@ pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
     }
 
     task.state = TaskState::Zombie.into();
-    task.exit_code = exit_code;
+    task.runtime.lock().exit_code = exit_code;
 
     task.file_table.lock().destroy();
     task.address_space.free();
-    task.children = Vec::new();
+    task.runtime.lock().children = Vec::new();
     // TODO(aeryz): We cannot free the kernel stack here but we need to free it
     // somewhere. The biggest problem is how we are going to free the whole task.
     // For the kernel stack at least, we can create a reaper process but I'm not
@@ -140,7 +149,7 @@ pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
 pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
     let task = unsafe { task_ptr.as_mut() };
 
-    if task.children.is_empty() {
+    if task.runtime.lock().children.is_empty() {
         return Ok(());
     }
 
@@ -158,7 +167,7 @@ pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
 }
 
 fn reap_zombie_child(task: &mut Task) -> bool {
-    let Some(child_idx) = task.children.iter().position(|pid| {
+    let Some(child_idx) = task.runtime.lock().children.iter().position(|pid| {
         let Some(child) = task::get_task(*pid) else {
             return false;
         };
@@ -168,7 +177,7 @@ fn reap_zombie_child(task: &mut Task) -> bool {
         return false;
     };
 
-    let child_pid = task.children.remove(child_idx);
+    let child_pid = task.runtime.lock().children.remove(child_idx);
     if let Some(mut child) = task::get_task(child_pid) {
         unsafe {
             child.as_mut().state = TaskState::Exited.into();
