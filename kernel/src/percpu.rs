@@ -1,6 +1,6 @@
-use core::{cell::OnceCell, ptr::NonNull};
+use core::cell::OnceCell;
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use ksync::SpinLock;
 
 use crate::{sched::PerCoreScheduler, task::Task};
@@ -11,8 +11,8 @@ static CORES: CoreTable = CoreTable(OnceCell::new());
 pub struct PerCoreContext {
     pub core_id: usize,
     pub scheduler: SpinLock<PerCoreScheduler>,
-    pub currently_running_task: NonNull<Task>,
-    pub idle_task: NonNull<Task>,
+    pub current_task: Arc<Task>,
+    pub idle_task: Arc<Task>,
     // pub reaper_task: NonNull<Task>,
 }
 
@@ -49,8 +49,8 @@ impl core::fmt::Debug for PerCoreContext {
         f.debug_struct("PerCoreContext")
             .field("core_id", &self.core_id)
             .field("scheduler", &*self.scheduler.lock())
-            .field("currently_running_task", &self.currently_running_task)
-            .field("idle_task", &self.idle_task)
+            // .field("currently_running_task", &self.currently_running_task)
+            // .field("idle_task", &self.idle_task)
             .finish()
     }
 }

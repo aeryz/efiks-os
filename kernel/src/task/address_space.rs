@@ -121,7 +121,7 @@ impl AddressSpace {
     }
 
     /// Frees up all the memory and removes all the internal refs.
-    pub fn free(&mut self) {
+    pub fn free(&self) {
         for r in &self.regions {
             if r.start.raw() > mm::KERNEL_DIRECT_MAPPING_BASE.raw() {
                 // Then this is a kernel mapping. We cannot free the kernel
@@ -131,9 +131,6 @@ impl AddressSpace {
             let pa = self.translate(r.start).unwrap();
             mm::free_frame(pa);
         }
-
-        // Vec::new as a capacity of 0
-        self.regions = Vec::new();
 
         PageTable::traverse_free(self.root_pt);
     }

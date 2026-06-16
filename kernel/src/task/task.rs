@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use ksync::SpinLock;
 
 use crate::{
@@ -49,7 +49,7 @@ pub struct TaskRuntime {
     pub wake_up_at: usize,
 }
 
-pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
+pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> Arc<Task> {
     let kernel_stack = mm::alloc_frame().unwrap();
     let kernel_stack_va =
         VirtualAddress::from_raw(kernel_stack.raw() + KERNEL_DIRECT_MAPPING_BASE.raw()).unwrap();
@@ -75,7 +75,7 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> NonNull<Task> {
     })
 }
 
-pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::Error> {
+pub fn spawn(path: &[u8], parent: Option<&Arc<Task>>) -> Result<Pid, error::Error> {
     let mut address_space = AddressSpace::new_user();
 
     let entry_va = exec::elf::load_executable(path, &mut address_space)?;
@@ -98,13 +98,12 @@ pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::E
 
     let pid = Pid::create_next();
 
-    let parent = parent.map(|mut p| unsafe {
-        let p = p.as_mut();
+    let parent = parent.map(|p| unsafe {
         p.runtime.lock().children.push(pid);
         p.pid
     });
 
-    let task_ptr = task::add_task(Task {
+    let task = task::add_task(Task {
         pid,
         kernel_sp: VirtualAddress::from_raw(kernel_stack).expect("virtual address is valid"),
         trap_frame: trap_frame_ptr.as_ptr_mut(),
@@ -120,19 +119,18 @@ pub fn spawn(path: &[u8], parent: Option<NonNull<Task>>) -> Result<Pid, error::E
         }),
     });
 
-    sched::enqueue_new_task(task_ptr);
+    sched::enqueue_new_task(&task);
 
     Ok(pid)
 }
 
 // TODO(aeryz): no sync mechanism for tasks this is scary
-pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
-    let task = unsafe { task_ptr.as_mut() };
+pub fn exit(task: &Arc<Task>, exit_code: i32) {
     if task.state == TaskState::Exited {
         return;
     }
 
-    task.state = TaskState::Zombie.into();
+    task.state.set(TaskState::Zombie);
     task.runtime.lock().exit_code = exit_code;
 
     task.file_table.lock().destroy();
@@ -143,12 +141,10 @@ pub fn exit(mut task_ptr: NonNull<Task>, exit_code: i32) {
     // For the kernel stack at least, we can create a reaper process but I'm not
     // sure what's the best way to free the whole task yet.
 
-    sched::on_task_exit(task_ptr);
+    sched::on_task_exit(task);
 }
 
-pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
-    let task = unsafe { task_ptr.as_mut() };
-
+pub fn wait(task: &Arc<Task>) -> Result<(), error::Error> {
     if task.runtime.lock().children.is_empty() {
         return Ok(());
     }
@@ -157,31 +153,29 @@ pub fn wait(mut task_ptr: NonNull<Task>) -> Result<(), error::Error> {
         return Ok(());
     }
 
-    task.state = TaskState::Blocked.into();
+    task.state.set(TaskState::Blocked);
 
-    sched::block_on_wait(task_ptr);
+    sched::block_on_wait(task);
 
     reap_zombie_child(task);
 
     Ok(())
 }
 
-fn reap_zombie_child(task: &mut Task) -> bool {
+fn reap_zombie_child(task: &Arc<Task>) -> bool {
     let Some(child_idx) = task.runtime.lock().children.iter().position(|pid| {
         let Some(child) = task::get_task(*pid) else {
             return false;
         };
 
-        unsafe { child.as_ref().state == TaskState::Zombie }
+        child.state == TaskState::Zombie
     }) else {
         return false;
     };
 
     let child_pid = task.runtime.lock().children.remove(child_idx);
-    if let Some(mut child) = task::get_task(child_pid) {
-        unsafe {
-            child.as_mut().state = TaskState::Exited.into();
-        }
+    if let Some(child) = task::get_task(child_pid) {
+        child.state.set(TaskState::Exited);
     }
 
     true

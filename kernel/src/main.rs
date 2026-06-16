@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(static_mut_refs)]
+#![feature(cold_path)]
 
 #[cfg(feature = "riscv-sbi")]
 pub type Arch = arch::Riscv;
@@ -23,7 +24,7 @@ mod task;
 mod userspace;
 mod vfs;
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 pub use debug::*;
 use ksync::SpinLock;
 
@@ -103,7 +104,7 @@ fn setup_core(core_id: usize, core_ctxs: &mut Vec<percpu::PerCoreContext>) {
     core_ctxs.push(percpu::PerCoreContext {
         core_id,
         scheduler: SpinLock::new(sched::init_per_core_scheduler()),
-        currently_running_task: idle_task,
+        current_task: Arc::clone(&idle_task),
         idle_task,
     });
 }

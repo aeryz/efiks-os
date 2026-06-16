@@ -6,6 +6,7 @@ use alloc::{
         btree_set::BTreeSet,
         vec_deque::VecDeque,
     },
+    sync::{Arc, Weak},
     vec::Vec,
 };
 use ksync::SpinLock;
@@ -14,7 +15,7 @@ use crate::{
     Arch,
     arch::{Architecture, ContextOf, TrapFrame},
     percpu::{self, PerCoreContext},
-    task::{self, Task, TaskState},
+    task::{self, Pid, Task, TaskState},
 };
 
 static SCHEDULER_CTX: SpinLock<GlobalScheduler> = SpinLock::new(GlobalScheduler {
@@ -25,20 +26,24 @@ static SCHEDULER_CTX: SpinLock<GlobalScheduler> = SpinLock::new(GlobalScheduler 
 
 pub struct GlobalScheduler {
     last_rq_hart_idx: usize,
-    irq_wait_queue: BTreeMap<u32, VecDeque<NonNull<Task>>>,
+    irq_wait_queue: BTreeMap<u32, VecDeque<Weak<Task>>>,
     /// The set of tasks that are blocked on `wait`
-    waiting_tasks: BTreeSet<NonNull<Task>>,
+    waiting_tasks: BTreeSet<Pid>,
 }
 
 unsafe impl Send for GlobalScheduler {}
 
 #[repr(C)]
 pub struct PerCoreScheduler {
+    // TODO(aeryz): im not sure making this `Arc<Task>` right now. I want to keep this as is but I
+    // also don't want to go through the runqueue and find the task and remove it when it is for
+    // example killed. I guess it's no big deal to defer dropping the task until the scheduler pops
+    // it since the task's resources will be freed anyways.
     /// The list of the runnable tasks for this hart.
-    runqueue: VecDeque<NonNull<Task>>,
+    runqueue: VecDeque<Arc<Task>>,
     /// The list of sleeping tasks that start sleeping when it was running on
     /// this core
-    sleeping_tasks: Vec<NonNull<Task>>,
+    sleeping_tasks: Vec<Weak<Task>>,
     /// The time when the currently running process started running.
     last_entrance_time: usize,
 }
@@ -69,25 +74,20 @@ pub fn schedule() {
     let mut sched = ctx.scheduler.lock();
     log::trace!("sched queue len: {}", sched.runqueue.len());
     match sched.runqueue.pop_front() {
-        Some(mut task) => {
+        Some(new_task) => {
             log::trace!("rq is not empty, switching to the next task");
-            let mut current_task = ctx.currently_running_task;
 
-            let new_task = unsafe { task.as_mut() };
             new_task.state.set(TaskState::Running);
 
-            ctx.currently_running_task = NonNull::new(new_task).expect("the task is nonnull");
-
-            unsafe {
-                let current_task_ref = current_task.as_mut();
-                if current_task != ctx.idle_task && current_task_ref.state == TaskState::Running {
-                    current_task_ref.state.set(TaskState::Ready);
-                    sched.runqueue.push_back(current_task);
-                } else if current_task != ctx.idle_task
-                    && current_task_ref.state == TaskState::Ready
-                {
-                    sched.runqueue.push_back(current_task);
-                }
+            if ctx.current_task.pid != ctx.idle_task.pid
+                && ctx.current_task.state == TaskState::Running
+            {
+                ctx.current_task.state.set(TaskState::Ready);
+                sched.runqueue.push_back(Arc::clone(&ctx.current_task));
+            } else if ctx.current_task.pid != ctx.idle_task.pid
+                && ctx.current_task.state == TaskState::Ready
+            {
+                sched.runqueue.push_back(Arc::clone(&ctx.current_task));
             }
 
             log::trace!(
@@ -98,41 +98,42 @@ pub fn schedule() {
             sched.last_entrance_time = Arch::read_current_time();
             drop(sched);
 
+            let prev_ctx =
+                (&ctx.current_task.context) as *const ContextOf<Arch> as *mut ContextOf<Arch>;
+            ctx.current_task = new_task;
+
             Arch::switch_to_user(
-                unsafe { (&mut current_task.as_mut().context) as *mut ContextOf<Arch> },
-                (&new_task.context) as *const ContextOf<Arch>,
-                new_task.address_space.root_pt,
+                prev_ctx,
+                (&ctx.current_task.context) as *const ContextOf<Arch>,
+                ctx.current_task.address_space.root_pt,
             );
         }
         None => {
             log::trace!("rq is empty, switching to the idle task");
-            let current_task = unsafe { ctx.currently_running_task.as_mut() };
             // If there are no tasks that we can run and the currently running task can
             // continue to be run, we just run it. This also covers if the
             // current_task is the idle task.
             if matches!(
-                current_task.state.raw(),
+                ctx.current_task.state.raw(),
                 TaskState::Ready | TaskState::Running
             ) {
                 log::trace!("current task is still ready, we don't switch to the idle task");
                 // TODO(aeryz): set last entrance time??
-                current_task.state.set(TaskState::Running);
+                ctx.current_task.state.set(TaskState::Running);
                 return;
             }
             log::trace!("current task is not ready, we are gonna switch to idle task");
 
-            ctx.currently_running_task = ctx.idle_task;
-            let idle_task = unsafe { ctx.idle_task.as_mut() };
-            idle_task.state.set(TaskState::Running);
+            let prev_ctx =
+                (&ctx.current_task.context) as *const ContextOf<Arch> as *mut ContextOf<Arch>;
+            ctx.current_task = Arc::clone(&ctx.idle_task);
+            ctx.idle_task.state.set(TaskState::Running);
             log::trace!("idle task is set to running");
 
             sched.last_entrance_time = Arch::read_current_time();
             drop(sched);
             Arch::set_kernel_sp(None);
-            Arch::switch_to(
-                (&mut current_task.context) as *mut ContextOf<Arch>,
-                (&idle_task.context) as *const ContextOf<Arch>,
-            );
+            Arch::switch_to(prev_ctx, (&ctx.idle_task.context) as *const ContextOf<Arch>);
         }
     }
 }
@@ -140,7 +141,7 @@ pub fn schedule() {
 /// Enqueues a new task to one of the runqueues.
 ///
 /// The runqueue selection is round robin as well.
-pub fn enqueue_new_task(mut task: NonNull<Task>) {
+pub fn enqueue_new_task(task: &Arc<Task>) {
     let idx = {
         let mut scheduler_ctx = SCHEDULER_CTX.lock();
 
@@ -156,10 +157,18 @@ pub fn enqueue_new_task(mut task: NonNull<Task>) {
     let core_ctx = percpu::get_core(idx);
 
     unsafe {
-        (*task.as_mut().trap_frame).set_per_core_ctx(core_ctx as *const PerCoreContext as usize);
+        // TODO(aeryz): smelly
+        task.trap_frame
+            .as_mut()
+            .unwrap()
+            .set_per_core_ctx(core_ctx as *const PerCoreContext as usize);
     }
 
-    core_ctx.scheduler.lock().runqueue.push_back(task);
+    core_ctx
+        .scheduler
+        .lock()
+        .runqueue
+        .push_back(Arc::clone(task));
 }
 
 pub fn on_timer_interrupt() {
@@ -177,28 +186,30 @@ pub fn on_timer_interrupt() {
         last_entrance = scheduler.last_entrance_time;
 
         let mut i = 0;
+        // TODO(aeryz): This is not nice, we are removing items at arbitrary indices in
+        // a very hot path
         while i < scheduler.sleeping_tasks.len() {
-            let should_remove = {
-                let task = unsafe { scheduler.sleeping_tasks[i].as_mut() };
-                let wake_up_at = task.runtime.lock().wake_up_at;
-                if current_time >= wake_up_at {
-                    log::trace!(
-                        "task should wake up at: {} and the cur is {current_time}, so we switch",
-                        wake_up_at
-                    );
-                    task.state.set(TaskState::Ready);
-                    some_task_woke_up = true;
-                    true
-                } else {
-                    i += 1;
-                    continue;
+            match scheduler.sleeping_tasks[i].upgrade() {
+                Some(task) => {
+                    let wake_up_at = task.runtime.lock().wake_up_at;
+                    if current_time >= wake_up_at {
+                        log::trace!(
+                            "task should wake up at: {} and the cur is {current_time}, so we switch",
+                            wake_up_at
+                        );
+                        task.state.set(TaskState::Ready);
+                        some_task_woke_up = true;
+                        let _ = scheduler.sleeping_tasks.remove(i);
+                        scheduler.runqueue.push_back(task);
+                    } else {
+                        i += 1;
+                        continue;
+                    }
                 }
-            };
-
-            if should_remove {
-                log::trace!("time is up, putting back to the runqueue");
-                let task = scheduler.sleeping_tasks.remove(i);
-                scheduler.runqueue.push_back(task);
+                None => {
+                    core::hint::cold_path();
+                    let _ = scheduler.sleeping_tasks.remove(i);
+                }
             }
         }
     }
@@ -208,11 +219,10 @@ pub fn on_timer_interrupt() {
         Arch::set_timer(current_time + Arch::nanos_to_ticks(8 * 1_000_000));
     };
 
-    if (ctx.currently_running_task != ctx.idle_task
+    if (ctx.current_task.pid != ctx.idle_task.pid
         && current_time - last_entrance > Arch::nanos_to_ticks(32 * 1_000_000))
         || some_task_woke_up
-        || (ctx.currently_running_task == ctx.idle_task
-            && !ctx.scheduler.lock().runqueue.is_empty())
+        || (ctx.current_task.pid == ctx.idle_task.pid && !ctx.scheduler.lock().runqueue.is_empty())
     {
         set_timer();
         schedule();
@@ -226,7 +236,7 @@ pub fn on_timer_interrupt() {
 
 /// Non timer-interrupts
 pub fn on_external_irq(irq: u32) {
-    let mut task = {
+    let task = {
         let mut scheduler_ctx = SCHEDULER_CTX.lock();
         let Some(queue) = scheduler_ctx.irq_wait_queue.get_mut(&irq) else {
             return;
@@ -236,13 +246,13 @@ pub fn on_external_irq(irq: u32) {
             return;
         };
 
+        let Some(task) = task.upgrade() else { return };
+
         task
     };
 
-    unsafe {
-        task.as_mut().state.set(TaskState::Ready);
-    }
-    enqueue_new_task(task);
+    task.state.set(TaskState::Ready);
+    enqueue_new_task(&task);
 }
 
 /// Yields execution when a task gets blocked because of an external irq
@@ -253,46 +263,32 @@ pub fn block_on_external_irq(irq: u32) {
             .expect("expected a valid reference to the per-CPU context")
     };
 
-    unsafe {
-        ctx.currently_running_task
-            .as_mut()
-            .state
-            .set(TaskState::Blocked);
-    }
+    ctx.current_task.state.set(TaskState::Blocked);
 
     match SCHEDULER_CTX.lock().irq_wait_queue.entry(irq) {
         Entry::Vacant(e) => {
             let mut queue = VecDeque::with_capacity(1);
-            queue.push_back(ctx.currently_running_task);
+            queue.push_back(Arc::downgrade(&ctx.current_task));
             e.insert(queue);
         }
-        Entry::Occupied(mut e) => e.get_mut().push_back(ctx.currently_running_task),
+        Entry::Occupied(mut e) => e.get_mut().push_back(Arc::downgrade(&ctx.current_task)),
     }
 
     schedule();
 }
 
-pub fn block_on_wait(task: NonNull<Task>) {
+pub fn block_on_wait(task: &Arc<Task>) {
     log::trace!("blocking on wait");
-    SCHEDULER_CTX.lock().waiting_tasks.insert(task);
+    SCHEDULER_CTX.lock().waiting_tasks.insert(task.pid);
     schedule();
 }
 
-pub fn on_task_exit(task_ptr: NonNull<Task>) {
-    let parent = unsafe {
-        task_ptr
-            .as_ref()
-            .runtime
-            .lock()
-            .parent
-            .map(|p| task::get_task(p))
-    };
-    if let Some(Some(mut parent)) = parent {
-        if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent) {
-            unsafe {
-                parent.as_mut().state.set(TaskState::Ready);
-            }
-            enqueue_new_task(parent);
+pub fn on_task_exit(task: &Arc<Task>) {
+    let parent = task.runtime.lock().parent.map(|p| task::get_task(p));
+    if let Some(Some(parent)) = parent {
+        if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent.pid) {
+            parent.state.set(TaskState::Ready);
+            enqueue_new_task(&parent);
         }
     };
 
@@ -306,12 +302,11 @@ pub fn sleep_current_task(time_ms: usize) {
             .expect("expected a valid reference to the per-CPU context")
     };
 
-    let current_task = unsafe { ctx.currently_running_task.as_mut() };
-    current_task.state.set(TaskState::Sleeping);
+    ctx.current_task.state.set(TaskState::Sleeping);
     // Setting an invalid time s.t. it overflows will result in this task to be
     // immediately woken up after a single time slice TODO(aeryz): check posix
     // to see how they handle overflows
-    current_task.runtime.lock().wake_up_at = Arch::read_current_time()
+    ctx.current_task.runtime.lock().wake_up_at = Arch::read_current_time()
         .checked_add(Arch::nanos_to_ticks(
             time_ms.checked_mul(1_000_000).unwrap_or(0),
         ))
@@ -320,7 +315,7 @@ pub fn sleep_current_task(time_ms: usize) {
     ctx.scheduler
         .lock()
         .sleeping_tasks
-        .push(ctx.currently_running_task);
+        .push(Arc::downgrade(&ctx.current_task));
 
     schedule();
 }
@@ -328,7 +323,7 @@ pub fn sleep_current_task(time_ms: usize) {
 impl core::fmt::Debug for PerCoreScheduler {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PerCoreScheduler")
-            .field("runqueue", &self.runqueue)
+            // .field("runqueue", &self.runqueue)
             .field("last_entrance_time", &self.last_entrance_time)
             .finish()
     }

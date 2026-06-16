@@ -42,9 +42,8 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                     .unwrap()
             };
 
-            let current_task = unsafe { this_ctx.currently_running_task.as_ref() };
             let file = {
-                let file_table = current_task.file_table.lock();
+                let file_table = this_ctx.current_task.file_table.lock();
                 file_table.get_file(fd)
             };
 
@@ -71,9 +70,8 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                     .unwrap()
             };
 
-            let current_task = unsafe { this_ctx.currently_running_task.as_ref() };
             let file = {
-                let file_table = current_task.file_table.lock();
+                let file_table = this_ctx.current_task.file_table.lock();
                 file_table.get_file(fd)
             };
 
@@ -133,7 +131,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             };
 
             unsafe {
-                *pid_ptr = match task::spawn(path, Some(this_ctx.currently_running_task)) {
+                *pid_ptr = match task::spawn(path, Some(&this_ctx.current_task)) {
                     Ok(pid) => pid,
                     Err(_) => {
                         tf.set_syscall_return_value(usize::MAX);
@@ -148,20 +146,20 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             let exit_code = tf.get_arg::<0>() as i32;
 
             let task = unsafe {
-                Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
-                    .as_mut()
+                &Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
+                    .as_ref()
                     .unwrap()
-                    .currently_running_task
+                    .current_task
             };
             task::exit(task, exit_code);
             tf.set_syscall_return_value(0);
         }
         Syscall::Wait => {
             let task = unsafe {
-                Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
-                    .as_mut()
+                &Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
+                    .as_ref()
                     .unwrap()
-                    .currently_running_task
+                    .current_task
             };
 
             let ret = match task::wait(task) {
