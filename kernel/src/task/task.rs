@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use alloc::{sync::Arc, vec::Vec};
 use ksync::SpinLock;
 
@@ -75,12 +73,13 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> Arc<Task> {
     })
 }
 
-pub fn spawn(path: &[u8], parent: Option<&Arc<Task>>) -> Result<Pid, error::Error> {
+pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<Pid, error::Error> {
     let mut address_space = AddressSpace::new_user();
 
     let entry_va = exec::elf::load_executable(path, &mut address_space)?;
 
-    let user_stack = address_space.create_user_stack();
+    let user_sp = address_space.create_user_stack();
+    let user_sp = create_initial_stack(&address_space, user_sp, argv);
 
     let kernel_stack = mm::phys_to_virt(address_space.create_kernel_stack().raw());
 
@@ -88,7 +87,7 @@ pub fn spawn(path: &[u8], parent: Option<&Arc<Task>>) -> Result<Pid, error::Erro
         VirtualAddress::from_raw(kernel_stack - size_of::<TrapFrameOf<Arch>>()).unwrap();
 
     unsafe {
-        *(trap_frame_ptr.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(entry_va, user_stack);
+        *(trap_frame_ptr.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(entry_va, user_sp);
     }
 
     let context = ContextOf::<Arch>::initialize(
@@ -98,7 +97,7 @@ pub fn spawn(path: &[u8], parent: Option<&Arc<Task>>) -> Result<Pid, error::Erro
 
     let pid = Pid::create_next();
 
-    let parent = parent.map(|p| unsafe {
+    let parent = parent.map(|p| {
         p.runtime.lock().children.push(pid);
         p.pid
     });
@@ -179,4 +178,72 @@ fn reap_zombie_child(task: &Arc<Task>) -> bool {
     }
 
     true
+}
+
+/// Creates an initial stack for the tasks that contains the following
+/// ```text
+/// High addressess
+/// +----------------+
+/// | argv strings   |
+/// +----------------+
+/// | NULL           |
+/// +----------------+
+/// | argv[N]        |
+/// +----------------+
+/// | ...            |
+/// +----------------+
+/// | argv[0]        |
+/// +----------------+
+/// | argc           |
+/// +----------------+ -> sp
+/// Low addresses
+/// ```
+/// We are actually reserving enough space for the arguments in the stack.
+fn create_initial_stack(
+    address_space: &AddressSpace,
+    user_sp: VirtualAddressOf<Arch>,
+    argv: &[&[u8]],
+) -> VirtualAddressOf<Arch> {
+    // TODO(aeryz): this assumes everything fits in a single page.
+    let stack_top = user_sp.raw();
+    let stack_page_start = stack_top & !(mm::PAGE_SIZE - 1);
+    let stack_top_kernel = (mm::phys_to_virt(
+        address_space
+            .translate(user_sp)
+            .expect("created by kernel")
+            .raw(),
+    ) + (stack_top - stack_page_start)) as *mut u8;
+
+    let strings_len = argv.iter().map(|arg| arg.len() + 1).sum::<usize>();
+    let stack_len = strings_len + (1 + argv.len() + 1) * size_of::<usize>();
+    assert!(stack_len <= stack_top - stack_page_start);
+
+    let final_sp = (stack_top - stack_len) & !0xf;
+    assert!(final_sp >= stack_page_start);
+    let mut argv_user_ptrs = Vec::new();
+
+    let mut string_cursor = stack_top;
+    for arg in argv.iter().rev() {
+        string_cursor -= arg.len() + 1;
+        let string_ptr = unsafe { stack_top_kernel.sub(stack_top - string_cursor) };
+        unsafe {
+            core::ptr::copy_nonoverlapping((*arg).as_ptr(), string_ptr, arg.len());
+            *string_ptr.add(arg.len()) = 0;
+        }
+
+        argv_user_ptrs.push(string_cursor);
+    }
+    argv_user_ptrs.reverse();
+
+    unsafe {
+        let frame = stack_top_kernel.sub(stack_top - final_sp) as *mut usize;
+
+        *frame = argv.len();
+        for (i, arg_ptr) in argv_user_ptrs.iter().enumerate() {
+            *frame.add(1 + i) = *arg_ptr;
+        }
+        *frame.add(1 + argv.len()) = 0;
+    }
+
+    VirtualAddress::from_raw(final_sp).expect("created from a valid user stack address")
 }

@@ -1,8 +1,4 @@
-use alloc::{
-    collections::btree_map::BTreeMap,
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use alloc::{collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use ksync::RwLock;
 use slab::Slab;
 

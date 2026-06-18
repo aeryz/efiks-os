@@ -47,20 +47,27 @@ pub fn syscall_shutdown() void {
         : .{ .memory = true });
 }
 
-pub fn syscall_exit(exit_code: i32) void {
+pub fn syscall_exit(exit_code: i32) noreturn {
     asm volatile ("ecall"
         :
         : [number] "{x17}" (Syscall.exit),
           [exit_code] "{x10}" (exit_code),
         : .{ .memory = true });
+
+    while (true) {}
 }
 
-pub fn syscall_spawn(path: [*]u8, pid: *usize) isize {
+pub fn syscall_spawn(
+    pid: *usize,
+    path: [*]u8,
+    argv: [*:null]const ?[*:0]const u8,
+) isize {
     const ret = asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
         : [number] "{x17}" (Syscall.spawn),
           [pid] "{x10}" (@intFromPtr(pid)),
           [path] "{x11}" (@intFromPtr(path)),
+          [argv] "{x12}" (@intFromPtr(argv)),
         : .{ .memory = true });
 
     return @bitCast(ret);

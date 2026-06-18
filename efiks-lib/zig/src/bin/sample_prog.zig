@@ -2,7 +2,27 @@ const efiks = @import("efiks");
 
 const PROMPT: []const u8 = "shell $ ";
 
-export fn _start() noreturn {
+export fn _start() callconv(.naked) noreturn {
+    asm volatile (
+        \\  mv a0, sp
+        \\  tail __efiks_start
+        ::: .{ .memory = true });
+}
+
+export fn __efiks_start(sp: usize) callconv(.c) noreturn {
+    const argc_ptr: *const usize = @ptrFromInt(sp);
+    const argc = argc_ptr.*;
+
+    const argv: [*]const ?[*:0]const u8 = @ptrFromInt(sp + @sizeOf(usize));
+
+    const exit_code = main(argc, argv);
+
+    efiks.syscall_exit(exit_code);
+}
+
+fn main(_: usize, argv: [*]const ?[*:0]const u8) i32 {
+    _ = efiks.syscall_write(argv[0].?, strlen(argv[0].?));
+
     while (true) {
         var buf: [512]u8 = @splat(0);
         var pos: usize = 0;
@@ -44,7 +64,14 @@ export fn _start() noreturn {
             const path = cmd[6..];
             var pid: usize = 0;
             // TODO(aeryz): proper errcode or `errno`?
-            _ = efiks.syscall_spawn(@ptrCast(path), &pid);
+            const a = [_:null]?[*:0]const u8{
+                null,
+            };
+            _ = efiks.syscall_spawn(
+                &pid,
+                @ptrCast(path),
+                &a,
+            );
             if (pid != 0) {
                 _ = efiks.syscall_wait();
                 _ = efiks.write("child finished execution.\n");
@@ -57,6 +84,8 @@ export fn _start() noreturn {
             _ = efiks.write(" not found.\n");
         }
     }
+
+    return 0;
 }
 
 fn eql(a: []const u8, b: []const u8) bool {
@@ -67,4 +96,10 @@ fn eql(a: []const u8, b: []const u8) bool {
     }
 
     return true;
+}
+
+fn strlen(s: [*:0]const u8) usize {
+    var len: usize = 0;
+    while (s[len] != 0) : (len += 1) {}
+    return len;
 }

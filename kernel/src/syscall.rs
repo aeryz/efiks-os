@@ -1,11 +1,14 @@
 use core::ptr;
 
+use alloc::vec::Vec;
+
 use crate::{
     Arch,
     arch::{Architecture, TrapFrame, TrapFrameOf},
     percpu, sched, task,
 };
 
+#[allow(unused)]
 #[repr(usize)]
 pub enum Syscall {
     Write = 1,
@@ -98,30 +101,22 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
         Syscall::Spawn => {
             let pid_ptr = tf.get_arg::<0>() as *mut task::Pid;
             let path_ptr = tf.get_arg::<1>() as *const u8;
+            let argv_ptr = tf.get_arg::<2>() as *const *const u8;
 
-            if pid_ptr == ptr::null_mut() || path_ptr == ptr::null() {
+            if pid_ptr == ptr::null_mut() || path_ptr == ptr::null() || argv_ptr == ptr::null() {
                 tf.set_syscall_return_value(usize::MAX);
                 return;
             }
 
-            let path = unsafe {
-                let mut count = 0;
-                loop {
-                    if count >= vfs::MAX_FILE_PATH_LENGTH {
-                        tf.set_syscall_return_value(usize::MAX);
-                        return;
-                    }
+            let mut path = [0; vfs::MAX_FILE_PATH_LENGTH];
+            let n_path = copy_from_user(path_ptr, path.as_mut_ptr(), vfs::MAX_FILE_PATH_LENGTH);
+            if n_path == 0 {
+                tf.set_syscall_return_value(usize::MAX);
+                return;
+            }
 
-                    if *(path_ptr.offset(count as isize)) == 0 {
-                        break core::slice::from_raw_parts(path_ptr, count);
-                    }
-
-                    count += 1;
-                }
-            };
-
-            log::trace!("spawn path is: {}", unsafe {
-                str::from_utf8_unchecked(path)
+            log::info!("spawn path is: {}", unsafe {
+                str::from_utf8_unchecked(&path)
             });
 
             let this_ctx = unsafe {
@@ -131,9 +126,10 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             };
 
             unsafe {
-                *pid_ptr = match task::spawn(path, Some(&this_ctx.current_task)) {
+                *pid_ptr = match task::spawn(&path[..n_path], &[], Some(&this_ctx.current_task)) {
                     Ok(pid) => pid,
-                    Err(_) => {
+                    Err(e) => {
+                        log::error!("couldn't spawn due to {e:?}");
                         tf.set_syscall_return_value(usize::MAX);
                         return;
                     }
@@ -171,4 +167,19 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
         }
         _ => unreachable!(),
     }
+}
+
+/// Copies from user buffer until it sees NULL.
+pub fn copy_from_user(user_ptr: *const u8, dest_ptr: *mut u8, max: usize) -> usize {
+    for i in 0..max {
+        unsafe {
+            let b = *user_ptr.add(i);
+            if b == 0 {
+                return i;
+            }
+            *dest_ptr.add(i) = b;
+        }
+    }
+
+    0
 }
