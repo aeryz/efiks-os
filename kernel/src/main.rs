@@ -67,27 +67,6 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     task::spawn(b"/foo/sample_prog", None).unwrap();
 
-    // let _ = task::create_task(unsafe {
-    //     VirtualAddress::from_raw_unchecked(
-    //         userspace::userspace_sleep_print_loop_1 as *const () as usize,
-    //     )
-    // });
-    // let _ = task::create_task(unsafe {
-    //     VirtualAddress::from_raw_unchecked(
-    //         userspace::userspace_sleep_print_loop_2 as *const () as usize,
-    //     )
-    // });
-    // let _ = task::create_task(unsafe {
-    //     VirtualAddress::from_raw_unchecked(
-    //         userspace::userspace_sleep_print_loop_3 as *const () as usize,
-    //     )
-    // });
-    // let _ = task::create_task(unsafe {
-    //     VirtualAddress::from_raw_unchecked(
-    //         userspace::userspace_sleep_print_loop_4 as *const () as usize,
-    //     )
-    // });
-
     #[cfg(feature = "multi-core")]
     {
         boot_core(1);
@@ -213,22 +192,3 @@ extern "C" fn idle_task_main() -> ! {
         }
     }
 }
-
-/*
-File:
-    inode
-
-Directory:
-
-Interface:
-int open(const char *path, int flags, ... /* mode_t mode */ );
-
-ssize_t write(int fd, const void buf[count], size_t count);
-
-ssize_t read(int fd, void buf[count], size_t count);
-
-off_t lseek(int fildes, off_t offset, int whence);
-
-
-
-*/

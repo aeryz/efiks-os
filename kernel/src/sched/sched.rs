@@ -277,10 +277,18 @@ pub fn block_on_external_irq(irq: u32) {
     schedule();
 }
 
-pub fn block_on_wait(task: &Arc<Task>) {
+pub fn block_on_wait(task: &Arc<Task>, should_block: impl FnOnce() -> bool) -> bool {
     log::trace!("blocking on wait");
-    SCHEDULER_CTX.lock().waiting_tasks.insert(task.pid);
+    let mut scheduler = SCHEDULER_CTX.lock();
+
+    if !should_block() {
+        return false;
+    }
+
+    scheduler.waiting_tasks.insert(task.pid);
+    drop(scheduler);
     schedule();
+    true
 }
 
 pub fn on_task_exit(task: &Arc<Task>) {
