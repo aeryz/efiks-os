@@ -134,8 +134,9 @@ pub fn exit(task: &Arc<Task>, exit_code: i32) {
     task.runtime.lock().exit_code = exit_code;
 
     task.file_table.lock().destroy();
-    task.address_space.free();
     task.runtime.lock().children = Vec::new();
+    // The task is still running on its own page table here. Free the address
+    // space from a reaper after this task is no longer current on any hart.
     // TODO(aeryz): We cannot free the kernel stack here but we need to free it
     // somewhere. The biggest problem is how we are going to free the whole task.
     // For the kernel stack at least, we can create a reaper process but I'm not
@@ -149,13 +150,12 @@ pub fn wait(task: &Arc<Task>) -> Result<(), error::Error> {
         return Ok(());
     }
 
-    if reap_zombie_child(task) {
-        return Ok(());
-    }
-
     task.state.set(TaskState::Blocked);
 
-    sched::block_on_wait(task);
+    if !sched::block_on_wait(task, || !reap_zombie_child(task)) {
+        task.state.set(TaskState::Running);
+        return Ok(());
+    }
 
     reap_zombie_child(task);
 
