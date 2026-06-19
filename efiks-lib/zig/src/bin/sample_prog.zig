@@ -1,6 +1,8 @@
 const efiks = @import("efiks");
+const std = @import("std");
 
 const PROMPT: []const u8 = "shell $ ";
+const MAX_SPAWN_ARGS = 8;
 
 export fn _start() callconv(.naked) noreturn {
     asm volatile (
@@ -20,11 +22,9 @@ export fn __efiks_start(sp: usize) callconv(.c) noreturn {
     efiks.syscall_exit(exit_code);
 }
 
-fn main(_: usize, argv: [*]const ?[*:0]const u8) i32 {
-    _ = efiks.syscall_write(argv[0].?, strlen(argv[0].?));
-
+fn main(_: usize, _: [*]const ?[*:0]const u8) i32 {
     while (true) {
-        var buf: [512]u8 = @splat(0);
+        var buf: [1024]u8 = @splat(0);
         var pos: usize = 0;
 
         _ = efiks.write(PROMPT);
@@ -46,37 +46,43 @@ fn main(_: usize, argv: [*]const ?[*:0]const u8) i32 {
                     }
                 },
                 else => {
-                    if (pos >= buf.len) {
+                    if (pos + 1 >= buf.len) {
                         break;
                     }
-                    _ = efiks.write(buf[pos..]);
+                    _ = efiks.write(buf[pos .. pos + 1]);
                     pos += 1;
                 },
             }
         }
 
         const cmd = buf[0..pos];
-        if (eql(cmd, "help")) {
+        if (std.mem.eql(u8, cmd, "help")) {
             _ = efiks.write("available commands:\n");
-            _ = efiks.write("- spawn\n");
-        } else if (cmd.len > 6 and eql(cmd[0..6], "spawn ")) {
+            _ = efiks.write("- spawn PATH argv0 argv1 ...\n");
+        } else if (std.mem.eql(u8, cmd, "spawn") or
+            (cmd.len > 6 and std.mem.eql(u8, cmd[0..6], "spawn ")))
+        {
             buf[pos] = 0;
-            const path = cmd[6..];
+
             var pid: usize = 0;
-            // TODO(aeryz): proper errcode or `errno`?
-            const a = [_:null]?[*:0]const u8{
-                null,
+            var a: [MAX_SPAWN_ARGS + 1:null]?[*:0]u8 = @splat(null);
+
+            const spawn_args = parse_spawn_command(buf[5 .. pos + 1], a[0..]) orelse {
+                _ = efiks.write("usage: spawn PATH argv0 argv1 ...\n");
+                continue;
             };
+            const argv = a[0..spawn_args.argc :null];
+
             _ = efiks.syscall_spawn(
                 &pid,
-                @ptrCast(path),
-                &a,
+                @ptrCast(spawn_args.path),
+                argv.ptr,
             );
             if (pid != 0) {
                 _ = efiks.syscall_wait();
                 _ = efiks.write("child finished execution.\n");
             }
-        } else if (eql(cmd, "exit")) {
+        } else if (std.mem.eql(u8, cmd, "exit")) {
             _ = efiks.syscall_exit(0);
         } else {
             _ = efiks.write("command ");
@@ -88,18 +94,61 @@ fn main(_: usize, argv: [*]const ?[*:0]const u8) i32 {
     return 0;
 }
 
-fn eql(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
+const SpawnArgs = struct {
+    path: [*:0]u8,
+    argc: usize,
+};
 
-    for (a, b) |x, y| {
-        if (x != y) return false;
+fn parse_spawn_command(
+    buf: []u8,
+    argv_out: []?[*:0]u8,
+) ?SpawnArgs {
+    var i: usize = skip_spaces(buf, 0);
+    if (i >= buf.len or buf[i] == 0) return null;
+
+    const path_start = i;
+    i = skip_word(buf, i);
+    if (i < buf.len) {
+        buf[i] = 0;
+        i += 1;
     }
 
-    return true;
+    var argc: usize = 0;
+    while (true) {
+        i = skip_spaces(buf, i);
+        if (i >= buf.len or buf[i] == 0) break;
+
+        if (argc + 1 >= argv_out.len) {
+            argv_out[argc] = null;
+            break;
+        }
+
+        argv_out[argc] = @ptrCast(&buf[i]);
+        argc += 1;
+
+        i = skip_word(buf, i);
+        if (i < buf.len) {
+            buf[i] = 0;
+            i += 1;
+        }
+    }
+
+    argv_out[argc] = null;
+
+    return .{
+        .path = @ptrCast(&buf[path_start]),
+        .argc = argc,
+    };
 }
 
-fn strlen(s: [*:0]const u8) usize {
-    var len: usize = 0;
-    while (s[len] != 0) : (len += 1) {}
-    return len;
+fn skip_spaces(buf: []const u8, start: usize) usize {
+    var i = start;
+    while (i < buf.len and buf[i] == ' ') : (i += 1) {}
+    return i;
+}
+
+fn skip_word(buf: []const u8, start: usize) usize {
+    var i = start;
+    while (i < buf.len and buf[i] != 0 and buf[i] != ' ') : (i += 1) {}
+    return i;
 }

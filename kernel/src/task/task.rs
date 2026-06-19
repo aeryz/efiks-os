@@ -73,6 +73,8 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> Arc<Task> {
     })
 }
 
+// TODO(aeryz): I think we should use a CStr instead since argv here doesn't
+// tell you its supposed to be null-terminated right away.
 pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<Pid, error::Error> {
     let mut address_space = AddressSpace::new_user();
 

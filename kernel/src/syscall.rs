@@ -36,8 +36,14 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
     match syscall {
         Syscall::Write => {
             let fd = tf.get_arg::<0>();
-            let buf = tf.get_arg::<1>() as *const u8;
+            let buf_ptr = tf.get_arg::<1>() as *const u8;
             let count = tf.get_arg::<2>();
+
+            // TODO(aeryz): we want to set error when buf_ptr == NULL?
+            if buf_ptr == core::ptr::null() || count == 0 {
+                tf.set_syscall_return_value(0);
+                return;
+            }
 
             let this_ctx = unsafe {
                 Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
@@ -55,10 +61,12 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                 return;
             };
 
-            let count = file
-                .lock()
-                .write(unsafe { core::slice::from_raw_parts(buf, count) })
-                .unwrap_or(usize::MAX);
+            let mut buf = Vec::new();
+            buf.resize(count, 0);
+
+            let n_buf = copy_from_user(buf_ptr, buf.as_mut_ptr(), usize::MAX);
+
+            let count = file.lock().write(&buf[0..n_buf]).unwrap_or(usize::MAX);
 
             tf.set_syscall_return_value(count);
         }
