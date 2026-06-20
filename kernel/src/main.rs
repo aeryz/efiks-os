@@ -69,8 +69,8 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     #[cfg(feature = "multi-core")]
     {
-        boot_core(1);
-        boot_core(2);
+        Arch::boot_core(1);
+        Arch::boot_core(2);
     }
     core_boot_entry(0);
 }
@@ -86,58 +86,6 @@ fn setup_core(core_id: usize, core_ctxs: &mut Vec<percpu::PerCoreContext>) {
         current_task: Arc::clone(&idle_task),
         idle_task,
     });
-}
-
-#[cfg(feature = "multi-core")]
-fn boot_core(core: usize) {
-    let mut sp = mm::alloc_frame().unwrap().raw() + 0xff0;
-
-    sp = sp - size_of::<usize>();
-
-    unsafe {
-        let sp_kernel_view = sp + mm::KERNEL_DIRECT_MAPPING_BASE.raw();
-        *(sp_kernel_view as *mut usize) = <Arch as arch::MemoryModel>::get_root_page_table();
-    }
-
-    let ret = riscv::sbi::hart_start(
-        core,
-        core_entry_trampoline as *const () as usize
-            - (mm::KERNEL_IMAGE_START_VA.raw() - mm::KERNEL_IMAGE_START_PA.raw()),
-        sp,
-    );
-
-    if ret.error == 0 {
-        log::info!("core {core} started successfully");
-    } else {
-        log::error!("core {core} start failure");
-        panic!();
-    }
-}
-
-// TODO(aeryz): This contains arch specific code, move it to `arch/boot`
-#[unsafe(naked)]
-#[allow(unused)]
-extern "C" fn core_entry_trampoline() -> ! {
-    core::arch::naked_asm!(
-        r#"
-        mv sp, a1
-        ld a2, 0(sp)
-
-        csrw satp, a2
-        sfence.vma
-
-        li t0, {kernel_offset}
-        la t1, core_boot_entry
-        add t0, t0, t1
-
-        li t1, {kernel_direct_mapping_base}
-        add sp, sp, t1
-
-        jr t0
-        "#,
-        kernel_offset = const (mm::KERNEL_IMAGE_START_VA.raw() - mm::KERNEL_IMAGE_START_PA.raw()),
-        kernel_direct_mapping_base = const (mm::KERNEL_DIRECT_MAPPING_BASE.raw()),
-    )
 }
 
 #[unsafe(no_mangle)]

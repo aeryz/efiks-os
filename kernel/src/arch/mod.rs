@@ -64,6 +64,10 @@ pub trait Architecture {
     }
 
     fn halt();
+
+    /// Boots the core `core_id` and jumps to `core_boot_entry` by only giving
+    /// the `core_id` as the parameter to it.
+    fn boot_core(core_id: usize);
 }
 
 pub type VirtualAddressOf<Arch> =
