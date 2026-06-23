@@ -18,7 +18,8 @@ pub enum Syscall {
     Exit,
     Spawn,
     Wait,
-    Sbrk,
+    // Match the linux kernel for Zig's `BrkAllocator` compatibility
+    Sbrk = 214,
     End,
 }
 
@@ -124,6 +125,26 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                 return;
             }
 
+            let mut argv_storage = Vec::new();
+            let mut i = 0;
+            loop {
+                let arg_ptr = unsafe { *argv_ptr.add(i) };
+                if arg_ptr == ptr::null() {
+                    break;
+                }
+
+                let mut arg = Vec::new();
+                arg.resize(strlen_user(arg_ptr), 0);
+                copy_from_user(arg_ptr, arg.as_mut_ptr(), arg.len());
+                argv_storage.push(arg);
+                i += 1;
+            }
+
+            let mut argv = Vec::new();
+            for arg in &argv_storage {
+                argv.push(arg.as_slice());
+            }
+
             log::info!("spawn path is: {}", unsafe {
                 str::from_utf8_unchecked(&path)
             });
@@ -135,7 +156,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             };
 
             unsafe {
-                *pid_ptr = match task::spawn(&path[..n_path], &[], Some(&this_ctx.current_task)) {
+                *pid_ptr = match task::spawn(&path[..n_path], &argv, Some(&this_ctx.current_task)) {
                     Ok(pid) => pid,
                     Err(e) => {
                         log::error!("couldn't spawn due to {e:?}");
@@ -174,6 +195,19 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
             tf.set_syscall_return_value(ret);
         }
+        Syscall::Sbrk => {
+            let brk = tf.get_arg::<0>() as usize;
+            let task = unsafe {
+                &Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
+                    .as_ref()
+                    .unwrap()
+                    .current_task
+            };
+
+            let new_brk = task.mm.brk(brk).raw();
+            log::info!("new brk: 0x{new_brk:x}");
+            tf.set_syscall_return_value(new_brk);
+        }
         _ => unreachable!(),
     }
 }
@@ -191,4 +225,16 @@ pub fn copy_from_user(user_ptr: *const u8, dest_ptr: *mut u8, max: usize) -> usi
     }
 
     0
+}
+
+fn strlen_user(user_ptr: *const u8) -> usize {
+    let mut i = 0;
+    loop {
+        let b = unsafe { *user_ptr.add(i) };
+        if b == 0 {
+            return i;
+        }
+
+        i += 1;
+    }
 }

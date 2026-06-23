@@ -1,3 +1,5 @@
+pub const BrkAllocator = @import("brk_allocator.zig");
+
 const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait };
 
 pub inline fn write(buf: []const u8) isize {

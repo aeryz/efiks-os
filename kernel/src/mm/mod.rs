@@ -67,22 +67,21 @@ impl MemoryManager {
         self_
     }
 
-    pub fn brk(&self, new_brk: VirtualAddressOf<Arch>) -> VirtualAddressOf<Arch> {
-        if self.start_brk.raw() >= new_brk.raw() {
-            return self.start_brk;
+    pub fn brk(&self, new_brk: usize) -> VirtualAddressOf<Arch> {
+        let mut brk = self.brk.lock();
+        if self.start_brk.raw() >= new_brk {
+            return *brk;
         }
 
-        let mut brk = self.brk.lock();
-
-        if new_brk.raw() < brk.raw() {
+        if new_brk < brk.raw() {
             // TODO(aeryz): i don't think immediately freeing the region makes sense but idk
             // what's the best thing to do here.
             // we don't immediately free the region for now.
-            *brk = new_brk;
+            *brk = VirtualAddress::from_raw(new_brk).unwrap();
             *brk
-        } else if new_brk.raw() > brk.raw() {
+        } else if new_brk > brk.raw() {
             let mut addr = helper::align_up(brk.raw(), PAGE_SIZE);
-            let new_mapped_end = helper::align_up(new_brk.raw(), PAGE_SIZE);
+            let new_mapped_end = helper::align_up(new_brk, PAGE_SIZE);
             let mut mapped_new_page = false;
 
             while addr < new_mapped_end {
@@ -97,7 +96,7 @@ impl MemoryManager {
                 Arch::flush_tlb();
             }
 
-            *brk = new_brk;
+            *brk = VirtualAddress::from_raw(new_brk).unwrap();
             *brk
         } else {
             *brk

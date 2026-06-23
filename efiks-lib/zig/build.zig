@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .single_threaded = true,
     });
 
     const lib = b.addLibrary(.{
@@ -31,6 +32,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/bin/sample_prog.zig"),
             .target = target,
             .optimize = optimize,
+            .single_threaded = true,
             .imports = &.{.{ .name = "efiks", .module = mod }},
         }),
     });
@@ -46,6 +48,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/bin/spawned_prog.zig"),
             .target = target,
             .optimize = optimize,
+            .single_threaded = true,
             .imports = &.{.{ .name = "efiks", .module = mod }},
         }),
     });
