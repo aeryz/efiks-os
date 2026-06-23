@@ -8,12 +8,9 @@ use crate::{
         mmu::VirtualAddress,
     },
     error, exec,
-    mm::{self, KERNEL_DIRECT_MAPPING_BASE},
+    mm::{self, KERNEL_DIRECT_MAPPING_BASE, MemoryManager},
     sched,
-    task::{
-        self, ADDRESS_SPACE_EMPTY, AddressSpace, AtomicTaskState, Pid, TaskState,
-        file_table::FileTable,
-    },
+    task::{self, AtomicTaskState, Pid, TaskState, file_table::FileTable},
 };
 
 #[repr(C)]
@@ -27,8 +24,7 @@ pub struct Task {
     pub context: ContextOf<Arch>,
     /// The current state of the process
     pub state: AtomicTaskState,
-    /// Address space
-    pub address_space: AddressSpace,
+    pub mm: MemoryManager,
     /// List of open files
     pub file_table: SpinLock<FileTable>,
     pub runtime: SpinLock<TaskRuntime>,
@@ -62,7 +58,7 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> Arc<Task> {
         trap_frame: core::ptr::null_mut(),
         context,
         state: TaskState::Ready.into(),
-        address_space: ADDRESS_SPACE_EMPTY,
+        mm: MemoryManager::EMPTY,
         file_table: SpinLock::new(FileTable::init()),
         runtime: SpinLock::new(TaskRuntime {
             parent: None,
@@ -76,14 +72,14 @@ pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> Arc<Task> {
 // TODO(aeryz): I think we should use a CStr instead since argv here doesn't
 // tell you its supposed to be null-terminated right away.
 pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<Pid, error::Error> {
-    let mut address_space = AddressSpace::new_user();
+    let mut mm_ = MemoryManager::new_user();
 
-    let entry_va = exec::elf::load_executable(path, &mut address_space)?;
+    let entry_va = exec::elf::load_executable(path, &mut mm_)?;
 
-    let user_sp = address_space.create_user_stack();
-    let user_sp = create_initial_stack(&address_space, user_sp, argv);
+    let user_sp = mm_.create_user_stack();
+    let user_sp = create_initial_stack(&mm_, user_sp, argv);
 
-    let kernel_stack = mm::phys_to_virt(address_space.create_kernel_stack().raw());
+    let kernel_stack = mm::phys_to_virt(mm_.create_kernel_stack().raw());
 
     let trap_frame_ptr =
         VirtualAddress::from_raw(kernel_stack - size_of::<TrapFrameOf<Arch>>()).unwrap();
@@ -110,7 +106,7 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
         trap_frame: trap_frame_ptr.as_ptr_mut(),
         context,
         state: TaskState::Ready.into(),
-        address_space,
+        mm: mm_,
         file_table: SpinLock::new(FileTable::init()),
         runtime: SpinLock::new(TaskRuntime {
             parent,
@@ -202,19 +198,16 @@ fn reap_zombie_child(task: &Arc<Task>) -> bool {
 /// ```
 /// We are actually reserving enough space for the arguments in the stack.
 fn create_initial_stack(
-    address_space: &AddressSpace,
+    mm_: &MemoryManager,
     user_sp: VirtualAddressOf<Arch>,
     argv: &[&[u8]],
 ) -> VirtualAddressOf<Arch> {
     // TODO(aeryz): this assumes everything fits in a single page.
     let stack_top = user_sp.raw();
     let stack_page_start = stack_top & !(mm::PAGE_SIZE - 1);
-    let stack_top_kernel = (mm::phys_to_virt(
-        address_space
-            .translate(user_sp)
-            .expect("created by kernel")
-            .raw(),
-    ) + (stack_top - stack_page_start)) as *mut u8;
+    let stack_top_kernel =
+        (mm::phys_to_virt(mm_.translate(user_sp).expect("created by kernel").raw())
+            + (stack_top - stack_page_start)) as *mut u8;
 
     let strings_len = argv.iter().map(|arg| arg.len() + 1).sum::<usize>();
     let stack_len = strings_len + (1 + argv.len() + 1) * size_of::<usize>();
