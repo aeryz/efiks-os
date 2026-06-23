@@ -90,7 +90,7 @@ pub fn schedule() {
 
             log::trace!(
                 "the new process's root page table is: 0x{:x}",
-                new_task.address_space.root_pt.raw()
+                new_task.mm.root_pt.raw()
             );
 
             sched.last_entrance_time = Arch::read_current_time();
@@ -103,7 +103,7 @@ pub fn schedule() {
             Arch::switch_to_user(
                 prev_ctx,
                 (&ctx.current_task.context) as *const ContextOf<Arch>,
-                ctx.current_task.address_space.root_pt,
+                ctx.current_task.mm.root_pt,
             );
         }
         None => {

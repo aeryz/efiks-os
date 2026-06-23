@@ -18,10 +18,11 @@ pub enum Syscall {
     Exit,
     Spawn,
     Wait,
+    Sbrk,
     End,
 }
 
-// TODO(aeryz): We don't want to implement the syscalls here. But they should
+// TODO(aeryz): We don't want to implement the syscalls here. They should
 // directly be implemented in their respective subsystem.
 #[unsafe(no_mangle)]
 #[inline(never)]

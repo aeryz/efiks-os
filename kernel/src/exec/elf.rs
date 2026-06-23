@@ -21,8 +21,7 @@ use crate::{
     },
     error,
     helper::{align_down, align_up},
-    mm::{self, PAGE_SIZE},
-    task::AddressSpace,
+    mm::{self, MemoryManager, PAGE_SIZE},
 };
 
 #[derive(Debug)]
@@ -47,13 +46,15 @@ pub struct Elf {
 /// Returns the entrypoint address
 pub fn load_executable(
     path: &[u8],
-    address_space: &mut AddressSpace,
+    mm_: &mut MemoryManager,
 ) -> Result<VirtualAddressOf<Arch>, error::Error> {
     let mut loader = Elf::load_from_file(path)?;
 
     let mut mapped_pages = BTreeMap::new();
     let mut file_page_buf = Vec::new();
     file_page_buf.resize(PAGE_SIZE, 0);
+
+    let mut max_aligned_vaddr_end = 0;
 
     for ph in loader.program_headers {
         // We only load the segments that are loadable
@@ -76,6 +77,7 @@ pub fn load_executable(
                 .ok_or(Error::SizeOverflow)?,
             PAGE_SIZE,
         );
+        max_aligned_vaddr_end = core::cmp::max(max_aligned_vaddr_end, aligned_vaddr_end);
 
         let flags = convert_elf_flag_to_pte(ph.p_flags);
 
@@ -84,7 +86,7 @@ pub fn load_executable(
                 .map_err(|_| Error::InvalidVirtualAddress)?;
             match mapped_pages.entry(aligned_vaddr) {
                 Entry::Vacant(e) => {
-                    let pa = address_space.map_allocate_page(va, flags);
+                    let pa = mm_.map_allocate_page(va, flags);
 
                     let kernel_vaddr = mm::phys_to_virt(pa.raw());
 
@@ -95,7 +97,7 @@ pub fn load_executable(
                 }
                 Entry::Occupied(mut e) => {
                     let new_flags = (*e.get()) | flags;
-                    address_space.remap_page(va, new_flags);
+                    mm_.remap_page(va, new_flags);
                     e.insert(new_flags);
                 }
             }
@@ -116,7 +118,7 @@ pub fn load_executable(
             // Get the previously mapped physical address from the page table so that
             // we can actually write to it. Because this `page_va` lives under the page
             // table of `address_space`. We need to convert it to kernel's mapped address.
-            let page_pa = address_space
+            let page_pa = mm_
                 .translate(unsafe { VirtualAddress::from_raw_unchecked(page_va) })
                 .expect("this is already mapped");
             let copy_len = (PAGE_SIZE - page_offset).min(ph.p_filesz as usize - copied);
@@ -137,6 +139,11 @@ pub fn load_executable(
             copied += copy_len;
         }
     }
+
+    mm_.set_initial_brk(
+        VirtualAddress::from_raw(max_aligned_vaddr_end)
+            .map_err(|_| Error::InvalidVirtualAddress)?,
+    );
 
     Ok(VirtualAddress::from_raw(loader.header.e_entry as usize)
         .map_err(|_| Error::InvalidVirtualAddress)?)

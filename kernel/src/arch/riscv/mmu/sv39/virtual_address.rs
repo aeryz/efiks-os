@@ -71,6 +71,13 @@ impl VirtualAddress {
     pub const fn raw(&self) -> usize {
         self.0
     }
+
+    // TODO(aeryz): This is temporary and ugly, produces an invalid virtual address
+    // that will explode if dereferenced. We really need a proper interface
+    // for virtual addresses so bad.
+    pub const fn invalid() -> Self {
+        Self(0)
+    }
 }
 
 impl Into<usize> for VirtualAddress {
