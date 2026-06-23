@@ -59,6 +59,8 @@ pub trait Architecture {
 
     fn set_timer(time_val: usize);
 
+    fn flush_tlb();
+
     fn nanos_to_ticks(nanos: usize) -> usize {
         nanos * Self::CPU_HERTZ / 1_000_000_000
     }
