@@ -3,6 +3,8 @@ mod kernel_allocator;
 mod kvm;
 mod mappings;
 
+use core::ptr;
+
 use alloc::vec::Vec;
 #[allow(unused)]
 pub use frame_allocator::{alloc_frame, free_frame};
@@ -13,7 +15,7 @@ pub use mappings::*;
 use crate::{
     Arch,
     arch::{
-        PhysicalAddressOf, VirtualAddressOf,
+        Architecture, PhysicalAddressOf, VirtualAddressOf,
         mmu::{PageTable, PhysicalAddress, PteFlags, VirtualAddress},
     },
     helper,
@@ -70,26 +72,33 @@ impl MemoryManager {
             return self.start_brk;
         }
 
-        let new_brk = helper::align_up(new_brk.raw(), PAGE_SIZE);
-
         let mut brk = self.brk.lock();
 
-        if new_brk < brk.raw() {
+        if new_brk.raw() < brk.raw() {
             // TODO(aeryz): i don't think immediately freeing the region makes sense but idk
             // what's the best thing to do here.
             // we don't immediately free the region for now.
-            *brk = unsafe { VirtualAddress::from_raw_unchecked(new_brk) };
+            *brk = new_brk;
             *brk
-        } else if new_brk > brk.raw() {
-            let total_pages = (new_brk - brk.raw()) / PAGE_SIZE;
-            for i in 0..total_pages {
-                let addr = brk.raw() + i * PAGE_SIZE;
-                self.map_allocate_page_if_not_exist(
+        } else if new_brk.raw() > brk.raw() {
+            let mut addr = helper::align_up(brk.raw(), PAGE_SIZE);
+            let new_mapped_end = helper::align_up(new_brk.raw(), PAGE_SIZE);
+            let mut mapped_new_page = false;
+
+            while addr < new_mapped_end {
+                mapped_new_page |= self.map_allocate_page_if_not_exist(
                     VirtualAddress::from_raw(addr).unwrap(),
                     PteFlags::RW | PteFlags::U,
                 );
+                addr += PAGE_SIZE;
             }
-            VirtualAddress::from_raw(new_brk).unwrap()
+
+            if mapped_new_page {
+                Arch::flush_tlb();
+            }
+
+            *brk = new_brk;
+            *brk
         } else {
             *brk
         }
@@ -155,21 +164,26 @@ impl MemoryManager {
         pa
     }
 
-    fn map_allocate_page_if_not_exist(&self, addr: VirtualAddressOf<Arch>, flags: PteFlags) {
+    fn map_allocate_page_if_not_exist(
+        &self,
+        addr: VirtualAddressOf<Arch>,
+        flags: PteFlags,
+    ) -> bool {
         let mut regions = self.regions.lock();
         match regions.binary_search_by_key(&addr.raw(), |r| r.start.raw()) {
             // it could match exactly
-            Ok(_) => return,
+            Ok(_) => false,
             // or it would not and then binary search will give us the location on where would it be
             // inserted to be sorted. With this, we know that `addr` is smaller than the start
             // address of the region at `i`. So we check whether we are within the region at `i -
             // 1`.
             Err(i) => {
-                if addr.raw() < regions[i].end.raw() {
-                    return;
+                if i > 0 && addr.raw() < regions[i - 1].end.raw() {
+                    return false;
                 }
 
                 let pa = alloc_frame().unwrap();
+                zero_frame(pa);
                 unsafe {
                     (*self.root_pt_ptr()).map_vm(addr, pa, flags);
                 }
@@ -181,6 +195,8 @@ impl MemoryManager {
                         end: unsafe { VirtualAddress::from_raw_unchecked(addr.raw() + PAGE_SIZE) },
                     },
                 );
+
+                true
             }
         }
     }
@@ -224,5 +240,11 @@ impl MemoryManager {
 
     fn root_pt_ptr(&self) -> *mut PageTable {
         phys_to_virt(self.root_pt.raw()) as *mut PageTable
+    }
+}
+
+fn zero_frame(pa: PhysicalAddressOf<Arch>) {
+    unsafe {
+        ptr::write_bytes(phys_to_virt(pa.raw()) as *mut u8, 0, PAGE_SIZE);
     }
 }

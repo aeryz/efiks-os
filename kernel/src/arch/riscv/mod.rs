@@ -108,6 +108,12 @@ impl Architecture for Riscv {
         riscv::sbi::set_timer(time_val);
     }
 
+    fn flush_tlb() {
+        unsafe {
+            core::arch::asm!("sfence.vma zero, zero");
+        }
+    }
+
     fn halt() {
         riscv::sbi::shutdown();
     }
