@@ -76,7 +76,7 @@ impl Architecture for Riscv {
         unsafe { context::swtch_to_user(from, to, mmu::pa_to_satp(root_pt)) };
     }
 
-    fn set_per_cpu_ctx_ptr(ptr: VirtualAddressOf<Self>) {
+    fn set_per_cpu_ctx_ptr(ptr: VirtAddr) {
         unsafe {
             core::arch::asm!(
                 "mv tp, {}",
@@ -99,7 +99,7 @@ impl Architecture for Riscv {
             .write();
     }
 
-    fn set_kernel_sp(sp: Option<VirtualAddressOf<Self>>) {
+    fn set_kernel_sp(sp: Option<VirtAddr>) {
         riscv::registers::Sscratch::new(match sp {
             None => 0,
             Some(sp) => sp.raw(),

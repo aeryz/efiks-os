@@ -14,14 +14,10 @@ use elf::{
 use vfs::SeekFrom;
 
 use crate::{
-    Arch,
-    arch::{
-        VirtualAddressOf,
-        mmu::{PteFlags, VirtualAddress},
-    },
+    arch::mmu::PteFlags,
     error,
-    helper::{align_down, align_up},
-    mm::{self, MemoryManager, PAGE_SIZE},
+    helper::align_down,
+    mm::{self, KernelVirtAddr, MemoryManager, PAGE_SIZE, VirtAddr},
 };
 
 #[derive(Debug)]
@@ -44,17 +40,14 @@ pub struct Elf {
 /// Loads the ELF executable at `path` into the `address_space`
 ///
 /// Returns the entrypoint address
-pub fn load_executable(
-    path: &[u8],
-    mm_: &mut MemoryManager,
-) -> Result<VirtualAddressOf<Arch>, error::Error> {
+pub fn load_executable(path: &[u8], mm_: &mut MemoryManager) -> Result<VirtAddr, error::Error> {
     let mut loader = Elf::load_from_file(path)?;
 
     let mut mapped_pages = BTreeMap::new();
     let mut file_page_buf = Vec::new();
     file_page_buf.resize(PAGE_SIZE, 0);
 
-    let mut max_aligned_vaddr_end = 0;
+    let mut max_aligned_vaddr_end = VirtAddr::ZERO;
 
     for ph in loader.program_headers {
         // We only load the segments that are loadable
@@ -70,28 +63,26 @@ pub fn load_executable(
             return Err(Error::InvalidProgramHeader.into());
         }
 
-        let mut aligned_vaddr = align_down(ph.p_vaddr as usize, PAGE_SIZE);
-        let aligned_vaddr_end = align_up(
-            (ph.p_vaddr as usize)
-                .checked_add(ph.p_memsz as usize)
-                .ok_or(Error::SizeOverflow)?,
-            PAGE_SIZE,
-        );
+        let mut aligned_vaddr = VirtAddr::new(ph.p_vaddr as usize).align_down(PAGE_SIZE);
+        let aligned_vaddr_end = VirtAddr::new(ph.p_vaddr as usize)
+            .offset_by(ph.p_memsz as isize)
+            .ok_or(error::Error::Todo)?
+            .align_up(PAGE_SIZE);
         max_aligned_vaddr_end = core::cmp::max(max_aligned_vaddr_end, aligned_vaddr_end);
 
         let flags = convert_elf_flag_to_pte(ph.p_flags);
 
         while aligned_vaddr < aligned_vaddr_end {
-            let va = VirtualAddress::from_raw(aligned_vaddr)
-                .map_err(|_| Error::InvalidVirtualAddress)?;
+            let va = aligned_vaddr;
             match mapped_pages.entry(aligned_vaddr) {
                 Entry::Vacant(e) => {
-                    let pa = mm_.map_allocate_page(va, flags);
+                    let pa = mm_.map_allocate_page(aligned_vaddr, flags)?;
 
-                    let kernel_vaddr = mm::phys_to_virt(pa.raw());
+                    let kernel_vaddr =
+                        KernelVirtAddr::new(VirtAddr::new(mm::phys_to_virt(pa.raw())))?;
 
                     unsafe {
-                        ptr::write_bytes(kernel_vaddr as *mut u8, 0, PAGE_SIZE);
+                        ptr::write_bytes(kernel_vaddr.as_ptr_mut::<u8>()?, 0, PAGE_SIZE);
                     }
                     e.insert(flags);
                 }
@@ -102,7 +93,9 @@ pub fn load_executable(
                 }
             }
 
-            aligned_vaddr += PAGE_SIZE;
+            aligned_vaddr = aligned_vaddr
+                .offset_by(PAGE_SIZE as isize)
+                .ok_or(error::Error::Todo)?;
         }
 
         // Based on the segment's size on the disc, we copy it to the `vaddr` that we
@@ -119,7 +112,7 @@ pub fn load_executable(
             // we can actually write to it. Because this `page_va` lives under the page
             // table of `address_space`. We need to convert it to kernel's mapped address.
             let page_pa = mm_
-                .translate(unsafe { VirtualAddress::from_raw_unchecked(page_va) })
+                .translate(VirtAddr::new(page_va))
                 .expect("this is already mapped");
             let copy_len = (PAGE_SIZE - page_offset).min(ph.p_filesz as usize - copied);
             read_exact_at(
@@ -140,13 +133,9 @@ pub fn load_executable(
         }
     }
 
-    mm_.set_initial_brk(
-        VirtualAddress::from_raw(max_aligned_vaddr_end)
-            .map_err(|_| Error::InvalidVirtualAddress)?,
-    );
+    mm_.set_initial_brk(max_aligned_vaddr_end);
 
-    Ok(VirtualAddress::from_raw(loader.header.e_entry as usize)
-        .map_err(|_| Error::InvalidVirtualAddress)?)
+    Ok(VirtAddr::new(loader.header.e_entry as usize))
 }
 
 impl Elf {

@@ -5,9 +5,9 @@ use crate::{
     Arch,
     arch::{
         Architecture, MemoryModel,
-        mmu::{PageTable, PageTableEntry, PhysicalAddress, PteFlags, VirtualAddress},
+        mmu::{PageTable, PageTableEntry, PhysicalAddress, PteFlags},
     },
-    mm::{self, frame_allocator, kernel_allocator},
+    mm::{self, KernelVirtAddr, frame_allocator, kernel_allocator},
 };
 use ksync::SpinLock;
 
@@ -84,8 +84,8 @@ pub fn early_init() {
         let end_addr = frame_allocator::alloc_frame().unwrap();
 
         kernel_allocator::init(
-            VirtualAddress::from_raw(mm::phys_to_virt(start_addr.raw())).unwrap(),
-            VirtualAddress::from_raw(mm::phys_to_virt(end_addr.raw()) + 4096).unwrap(),
+            KernelVirtAddr::new(mm::phys_to_virt(start_addr.raw())).unwrap(),
+            KernelVirtAddr::new(mm::phys_to_virt(end_addr.raw()) + 4096).unwrap(),
         );
     }
 
