@@ -3,12 +3,9 @@ use ksync::SpinLock;
 
 use crate::{
     Arch,
-    arch::{
-        Architecture, Context, ContextOf, TrapFrame, TrapFrameOf, VirtualAddressOf,
-        mmu::VirtualAddress,
-    },
+    arch::{Architecture, Context, ContextOf, TrapFrame, TrapFrameOf},
     error, exec,
-    mm::{self, KERNEL_DIRECT_MAPPING_BASE, MemoryManager},
+    mm::{self, KernelVirtAddr, MemoryManager, VirtAddr},
     sched,
     task::{self, AtomicTaskState, Pid, TaskState, file_table::FileTable},
 };
@@ -17,9 +14,7 @@ use crate::{
 pub struct Task {
     /// Process ID
     pub pid: Pid,
-    /// Kernel stack pointer
-    pub kernel_sp: VirtualAddressOf<Arch>,
-    pub trap_frame: *mut TrapFrameOf<Arch>,
+    pub trap_frame: KernelVirtAddr,
     /// Pointer to the context
     pub context: ContextOf<Arch>,
     /// The current state of the process
@@ -43,18 +38,11 @@ pub struct TaskRuntime {
     pub wake_up_at: usize,
 }
 
-pub fn create_kernel_task(entry: VirtualAddressOf<Arch>) -> Arc<Task> {
-    let kernel_stack = mm::alloc_frame().unwrap();
-    let kernel_stack_va =
-        VirtualAddress::from_raw(kernel_stack.raw() + KERNEL_DIRECT_MAPPING_BASE.raw()).unwrap();
-
-    // TODO(aeryz): I don't like this
-    let kernel_sp = VirtualAddress::from_raw(kernel_stack_va.raw() + 0xfa0).unwrap();
+pub fn create_kernel_task(entry: VirtAddr) -> Arc<Task> {
     let context = ContextOf::<Arch>::initialize(entry, kernel_sp);
 
     task::add_task(Task {
         pid: Pid::create_next(),
-        kernel_sp,
         trap_frame: core::ptr::null_mut(),
         context,
         state: TaskState::Ready.into(),
@@ -79,18 +67,17 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     let user_sp = mm_.create_user_stack();
     let user_sp = create_initial_stack(&mm_, user_sp, argv);
 
-    let kernel_stack = mm::phys_to_virt(mm_.create_kernel_stack().raw());
+    let kernel_stack = mm::phys_to_virt(mm_.create_kernel_stack()?.raw());
 
-    let trap_frame_ptr =
-        VirtualAddress::from_raw(kernel_stack - size_of::<TrapFrameOf<Arch>>()).unwrap();
+    let trap_frame = KernelVirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>())?;
 
     unsafe {
-        *(trap_frame_ptr.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(entry_va, user_sp);
+        *(trap_frame.as_ptr_mut()?) = TrapFrameOf::<Arch>::initialize(entry_va, user_sp);
     }
 
     let context = ContextOf::<Arch>::initialize(
         Arch::trap_resume_ptr(),
-        VirtualAddress::from_raw(kernel_stack - size_of::<TrapFrameOf<Arch>>()).unwrap(),
+        VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>()),
     );
 
     let pid = Pid::create_next();
@@ -102,8 +89,7 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
 
     let task = task::add_task(Task {
         pid,
-        kernel_sp: VirtualAddress::from_raw(kernel_stack).expect("virtual address is valid"),
-        trap_frame: trap_frame_ptr.as_ptr_mut(),
+        trap_frame,
         context,
         state: TaskState::Ready.into(),
         mm: mm_,
@@ -199,15 +185,17 @@ fn reap_zombie_child(task: &Arc<Task>) -> bool {
 /// We are actually reserving enough space for the arguments in the stack.
 fn create_initial_stack(
     mm_: &MemoryManager,
-    user_sp: VirtualAddressOf<Arch>,
+    user_sp: VirtAddr,
     argv: &[&[u8]],
 ) -> VirtualAddressOf<Arch> {
     // TODO(aeryz): this assumes everything fits in a single page.
     let stack_top = user_sp.raw();
     let stack_page_start = stack_top & !(mm::PAGE_SIZE - 1);
-    let stack_top_kernel =
-        (mm::phys_to_virt(mm_.translate(user_sp).expect("created by kernel").raw())
-            + (stack_top - stack_page_start)) as *mut u8;
+    let stack_top_kernel = mm_
+        .translate_to_kernel(user_sp)
+        .expect("created by the kernel");
+    (mm::phys_to_virt(mm_.translate(user_sp).expect("created by kernel").raw())
+        + (stack_top - stack_page_start)) as *mut u8;
 
     let strings_len = argv.iter().map(|arg| arg.len() + 1).sum::<usize>();
     let stack_len = strings_len + (1 + argv.len() + 1) * size_of::<usize>();
