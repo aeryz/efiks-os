@@ -8,15 +8,17 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
+use crate::mm::{KernelVirtAddr, VirtAddr};
+
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {
     const CPU_HERTZ: usize;
 
-    type TrapFrame: TrapFrame<Self>;
+    type TrapFrame: TrapFrame;
 
     type MemoryModel: MemoryModel;
 
-    type Context: Context<Self>;
+    type Context: Context;
 
     #[inline(always)]
     fn bump_sp(sp: usize);
@@ -51,7 +53,7 @@ pub trait Architecture {
 
     /// The address where a first time spawned process jump to,
     /// should be right after calling the trap handler in the trap entry
-    fn trap_resume_ptr() -> VirtualAddressOf<Self>;
+    fn trap_resume_ptr() -> KernelVirtAddr;
 
     fn setup_unpriviledged_mode();
 
@@ -91,8 +93,8 @@ pub trait MemoryModel {
     fn get_root_page_table() -> usize;
 }
 
-pub trait TrapFrame<A: Architecture + ?Sized> {
-    fn initialize(instruction_ptr: VirtualAddressOf<A>, stack_ptr: VirtualAddressOf<A>) -> Self;
+pub trait TrapFrame {
+    fn initialize(instruction_ptr: VirtAddr, stack_ptr: VirtAddr) -> Self;
 
     fn get_syscall(&self) -> usize;
 
@@ -103,6 +105,6 @@ pub trait TrapFrame<A: Architecture + ?Sized> {
     fn set_per_core_ctx(&mut self, ptr: usize);
 }
 
-pub trait Context<A: Architecture + ?Sized> {
-    fn initialize(entry: VirtualAddressOf<A>, kernel_sp: VirtualAddressOf<A>) -> Self;
+pub trait Context {
+    fn initialize(entry: VirtAddr, kernel_sp: VirtAddr) -> Self;
 }

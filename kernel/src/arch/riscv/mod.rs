@@ -4,7 +4,7 @@ pub mod mmu;
 pub mod plic;
 pub mod trap;
 
-use core::ptr::NonNull;
+use core::{cell::OnceCell, ptr::NonNull};
 
 use riscv::registers::Satp;
 
@@ -17,7 +17,7 @@ use crate::{
             trap_frame::TrapFrame,
         },
     },
-    mm,
+    mm::{self, KernelVirtAddr, VirtAddr},
 };
 
 use context::Context;
@@ -85,8 +85,11 @@ impl Architecture for Riscv {
         }
     }
 
-    fn trap_resume_ptr() -> VirtualAddressOf<Self> {
-        VirtualAddress::from_raw(trap_resume as *const () as usize).unwrap()
+    fn trap_resume_ptr() -> KernelVirtAddr {
+        // TODO(aeryz): we want to put this in a static to not gamble on compiler
+        // optimization
+        KernelVirtAddr::new(VirtAddr::new(trap_resume as *const () as usize))
+            .expect("trap resume is at a valid kernel address")
     }
 
     fn setup_unpriviledged_mode() {
