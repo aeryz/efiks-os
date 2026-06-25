@@ -17,7 +17,7 @@ pub use mappings::*;
 use crate::{
     Arch,
     arch::{
-        Architecture, PhysicalAddressOf,
+        Architecture, MemoryModel, MemoryModelOf, PhysicalAddressOf,
         mmu::{PageTable, PhysicalAddress, PteFlags},
     },
     error::Error,
@@ -61,10 +61,11 @@ impl MemoryManager {
         let mut self_ = Self::EMPTY;
         self_.root_pt = root_pt;
 
-        unsafe {
-            *(self_.root_pt_ptr()) = PageTable::empty();
-            kvm_full_map(self_.root_pt_ptr().as_mut().unwrap());
-        }
+        let root_pt = VirtAddr::new(phys_to_virt(root_pt.raw()));
+
+        MemoryModelOf::<Arch>::initialize_empty_pt(root_pt.into());
+
+        kvm_full_map(root_pt);
 
         self_
     }
@@ -89,7 +90,7 @@ impl MemoryManager {
             while addr < new_mapped_end {
                 mapped_new_page |=
                     self.map_allocate_page_if_not_exist(addr, PteFlags::RW | PteFlags::U)?;
-                addr = addr.offset_by(PAGE_SIZE).ok_or(Error::Overflow)?;
+                addr = addr.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?;
             }
 
             if mapped_new_page {
@@ -107,13 +108,14 @@ impl MemoryManager {
         // 32KB user stack
         let mut va = VirtAddr::new(0x0000_0000_3fff_0000);
         for _ in 0..8 {
-            va = va.offset_by(PAGE_SIZE).ok_or(Error::Overflow)?;
+            va = va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?;
 
             self.map_allocate_page(va, PteFlags::RW | PteFlags::U);
         }
 
         // TODO(aeryz): why -0x60 here and how's this gonna effect the alignment
-        va.offset_by(PAGE_SIZE - 0x60).ok_or(Error::Overflow)
+        va.offset_by(PAGE_SIZE as isize - 0x60)
+            .ok_or(Error::Overflow)
     }
 
     pub fn create_kernel_stack(&self) -> Result<PhysicalAddressOf<Arch>, Error> {
@@ -127,7 +129,7 @@ impl MemoryManager {
             self.insert_mapping(
                 kernel_stack_va,
                 kernel_stack_va
-                    .offset_by(PAGE_SIZE)
+                    .offset_by(PAGE_SIZE as isize)
                     .ok_or(Error::Overflow)?,
             );
 
@@ -155,10 +157,10 @@ impl MemoryManager {
         let pa = alloc_frame().unwrap();
 
         unsafe {
-            (*self.root_pt_ptr()).map_vm(va, pa, flags);
+            (*self.root_pt_ptr()).map_vm(va.into(), pa, flags);
         };
 
-        self.insert_mapping(va, va.offset_by(PAGE_SIZE).ok_or(Error::Overflow)?)?;
+        self.insert_mapping(va, va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?)?;
 
         Ok(pa)
     }
@@ -184,14 +186,14 @@ impl MemoryManager {
                 let pa = alloc_frame().unwrap();
                 zero_frame(pa);
                 unsafe {
-                    (*self.root_pt_ptr()).map_vm(addr, pa, flags);
+                    (*self.root_pt_ptr()).map_vm(addr.into(), pa, flags);
                 }
 
                 regions.insert(
                     i,
                     VmRegion {
                         start: addr,
-                        end: addr.offset_by(PAGE_SIZE).ok_or(Error::Overflow)?,
+                        end: addr.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?,
                     },
                 );
 
@@ -215,7 +217,7 @@ impl MemoryManager {
     /// basically.
     pub fn remap_page(&mut self, va: VirtAddr, flags: PteFlags) {
         unsafe {
-            (*self.root_pt_ptr()).remap_vm(va, flags);
+            (*self.root_pt_ptr()).remap_vm(va.into(), flags);
         };
     }
 
@@ -239,7 +241,7 @@ impl MemoryManager {
         KernelVirtAddr::new(unsafe {
             phys_to_virt(
                 (*self.root_pt_ptr())
-                    .translate(va)
+                    .translate(va.into())
                     .ok_or(Error::Todo)?
                     .raw(),
             )
@@ -247,11 +249,7 @@ impl MemoryManager {
     }
 
     pub fn translate(&self, va: VirtAddr) -> Option<PhysicalAddressOf<Arch>> {
-        unsafe { (*self.root_pt_ptr()).translate(va) }
-    }
-
-    fn root_pt_ptr(&self) -> *mut PageTable {
-        phys_to_virt(self.root_pt.raw()) as *mut PageTable
+        unsafe { (*self.root_pt_ptr()).translate(va.into()) }
     }
 }
 

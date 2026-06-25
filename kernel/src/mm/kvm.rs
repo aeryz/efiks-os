@@ -7,7 +7,7 @@ use crate::{
         Architecture, MemoryModel,
         mmu::{PageTable, PageTableEntry, PhysicalAddress, PteFlags},
     },
-    mm::{self, KernelVirtAddr, frame_allocator, kernel_allocator},
+    mm::{self, KernelVirtAddr, VirtAddr, frame_allocator, kernel_allocator},
 };
 use ksync::SpinLock;
 
@@ -95,7 +95,7 @@ pub fn early_init() {
 /// Maps the whole memory starting from `mm::KERNEL_DIRECT_MAPPING_BASE` and
 /// maps the kernel text as executable so that we don't need to switch page
 /// tables during traps.
-pub fn kvm_full_map(page_table: &mut PageTable) {
+pub fn kvm_full_map(root_pt: VirtAddr) {
     let va = mm::KERNEL_DIRECT_MAPPING_BASE;
 
     let base_pte =

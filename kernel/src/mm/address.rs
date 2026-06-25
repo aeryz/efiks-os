@@ -54,6 +54,13 @@ impl From<usize> for VirtAddr {
     }
 }
 
+#[cfg(feature = "riscv-sbi")]
+impl From<VirtAddr> for crate::arch::mmu::VirtualAddress {
+    fn from(value: VirtAddr) -> Self {
+        unsafe { crate::arch::mmu::VirtualAddress::from_raw_unchecked(value.0) }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct KernelVirtAddr(VirtAddr);
 
