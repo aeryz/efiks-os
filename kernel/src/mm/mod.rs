@@ -223,7 +223,7 @@ impl MemoryManager {
     pub fn free(&self) {
         let regions = self.regions.lock();
         for r in regions.iter() {
-            if r.start > KERNEL_DIRECT_MAPPING_BASE_2 {
+            if r.start > KERNEL_DIRECT_MAPPING_BASE {
                 // Then this is a kernel mapping. We cannot free the kernel
                 // stack at this point since it is still in-use.
                 continue;

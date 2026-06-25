@@ -49,7 +49,7 @@ pub trait Architecture {
         root_pt: PhysicalAddressOf<Self>,
     );
 
-    fn set_per_cpu_ctx_ptr(ptr: VirtualAddressOf<Self>);
+    fn set_per_cpu_ctx_ptr(ptr: VirtAddr);
 
     /// The address where a first time spawned process jump to,
     /// should be right after calling the trap handler in the trap entry
@@ -57,7 +57,7 @@ pub trait Architecture {
 
     fn setup_unpriviledged_mode();
 
-    fn set_kernel_sp(sp: Option<VirtualAddressOf<Self>>);
+    fn set_kernel_sp(sp: Option<VirtAddr>);
 
     fn set_timer(time_val: usize);
 

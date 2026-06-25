@@ -1,7 +1,7 @@
 use core::arch::global_asm;
 
 use crate::{
-    arch::{self, Riscv, VirtualAddressOf},
+    arch::{self, Riscv},
     mm::VirtAddr,
 };
 

@@ -29,11 +29,12 @@ pub use debug::*;
 use ksync::SpinLock;
 
 use crate::{
-    arch::{Architecture, mmu::VirtualAddress},
+    arch::Architecture,
     driver::{
         uart,
         virtio::{self, block::VirtioBlkDriver},
     },
+    mm::VirtAddr,
 };
 
 core::arch::global_asm!(include_str!("start.s"));
@@ -76,9 +77,8 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 }
 
 fn setup_core(core_id: usize, core_ctxs: &mut Vec<percpu::PerCoreContext>) {
-    let idle_task = task::create_kernel_task(
-        VirtualAddress::from_raw(idle_task_main as *const () as usize).unwrap(),
-    );
+    let idle_task =
+        task::create_kernel_task(VirtAddr::new(idle_task_main as *const () as usize)).unwrap();
 
     core_ctxs.push(percpu::PerCoreContext {
         core_id,
@@ -94,9 +94,9 @@ extern "C" fn core_boot_entry(core: usize) -> ! {
     log::trace!("trap handler initiated");
 
     let core_ctx = percpu::get_core(core);
-    Arch::set_per_cpu_ctx_ptr(
-        VirtualAddress::from_raw(core_ctx as *const percpu::PerCoreContext as usize).unwrap(),
-    );
+    Arch::set_per_cpu_ctx_ptr(VirtAddr::new(
+        core_ctx as *const percpu::PerCoreContext as usize,
+    ));
 
     Arch::init_uart(core_ctx.core_id);
     log::trace!("uart initiated for hart {}", core_ctx.core_id);

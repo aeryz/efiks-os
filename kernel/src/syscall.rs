@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use crate::{
     Arch,
     arch::{Architecture, TrapFrame, TrapFrameOf},
+    mm::VirtAddr,
     percpu, sched, task,
 };
 
@@ -204,7 +205,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                     .current_task
             };
 
-            let new_brk = task.mm.brk(brk).raw();
+            let new_brk = task.mm.brk(VirtAddr::new(brk)).unwrap().raw();
             log::info!("new brk: 0x{new_brk:x}");
             tf.set_syscall_return_value(new_brk);
         }
