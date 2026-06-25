@@ -4,6 +4,10 @@ use crate::exec;
 pub enum Error {
     Vfs(vfs::VfsError),
     Elf(exec::elf::Error),
+    Unaligned,
+    Overflow,
+    /// Errors that are undecided yet
+    Todo,
 }
 
 impl From<vfs::VfsError> for Error {
