@@ -1,6 +1,9 @@
 use core::arch::global_asm;
 
-use crate::arch::{self, Riscv, VirtualAddressOf};
+use crate::{
+    arch::{self, Riscv, VirtualAddressOf},
+    mm::VirtAddr,
+};
 
 unsafe extern "C" {
     pub fn swtch_to_user(from: *mut Context, to: *const Context, satp: usize);
@@ -73,11 +76,11 @@ pub struct Context {
     pub s11: u64,
 }
 
-impl arch::Context<Riscv> for Context {
-    fn initialize(entry: VirtualAddressOf<Riscv>, kernel_sp: VirtualAddressOf<Riscv>) -> Self {
+impl arch::Context for Context {
+    fn initialize(entry: VirtAddr, kernel_sp: VirtAddr) -> Self {
         Self {
-            ra: Into::<usize>::into(entry) as u64,
-            sp: Into::<usize>::into(kernel_sp) as u64,
+            ra: entry.raw() as u64,
+            sp: kernel_sp.raw() as u64,
             ..Default::default()
         }
     }

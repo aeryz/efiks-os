@@ -1,4 +1,7 @@
-use crate::arch::{self, Riscv, VirtualAddressOf};
+use crate::{
+    arch::{self, Riscv, VirtualAddressOf},
+    mm::VirtAddr,
+};
 
 #[repr(C)]
 #[derive(Clone, Default)]
@@ -63,14 +66,11 @@ impl From<usize> for TrapCause {
     }
 }
 
-impl arch::TrapFrame<Riscv> for TrapFrame {
-    fn initialize(
-        instruction_ptr: VirtualAddressOf<Riscv>,
-        stack_ptr: VirtualAddressOf<Riscv>,
-    ) -> Self {
+impl arch::TrapFrame for TrapFrame {
+    fn initialize(instruction_ptr: VirtAddr, stack_ptr: VirtAddr) -> Self {
         Self {
-            sepc: instruction_ptr.into(),
-            sp: stack_ptr.into(),
+            sepc: instruction_ptr.raw(),
+            sp: stack_ptr.raw(),
             sstatus: riscv::registers::Sstatus::empty()
                 .enable_user_mode()
                 .set_spie()

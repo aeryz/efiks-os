@@ -8,6 +8,7 @@ pub enum Error {
     Overflow,
     /// Errors that are undecided yet
     Todo,
+    Oom,
 }
 
 impl From<vfs::VfsError> for Error {

@@ -1,6 +1,6 @@
 use ksync::SpinLock;
 
-use crate::arch::mmu::PhysicalAddress;
+use crate::{arch::mmu::PhysicalAddress, error::Error};
 
 static FRAME_ALLOCATOR: SpinLock<FrameAllocator<64>> = SpinLock::new(FrameAllocator::new(unsafe {
     PhysicalAddress::from_raw_unchecked(0)
@@ -14,7 +14,7 @@ pub(super) fn init(start_addr: PhysicalAddress) {
 // TODO: be able to allocate a custom amount (will probably have this while
 // implementing sbrk)
 /// Allocate a single 4k page.
-pub fn alloc_frame() -> Result<PhysicalAddress, ()> {
+pub fn alloc_frame() -> Result<PhysicalAddress, Error> {
     FRAME_ALLOCATOR.lock().alloc()
 }
 
@@ -51,7 +51,7 @@ impl<const N: usize> FrameAllocator<N> {
     ///
     /// Returns `Err` if there is no memory left.
     #[must_use]
-    fn alloc(&mut self) -> Result<PhysicalAddress, ()> {
+    fn alloc(&mut self) -> Result<PhysicalAddress, Error> {
         for page_i in 0..self.pages.len() {
             for i in 0..(u64::BITS as usize) {
                 if (self.pages[page_i] >> i) & 1 == 0 {
@@ -67,7 +67,7 @@ impl<const N: usize> FrameAllocator<N> {
             }
         }
 
-        Err(())
+        Err(Error::Oom)
     }
 
     fn free(&mut self, ptr: PhysicalAddress) {

@@ -6,8 +6,31 @@ pub struct VirtAddr(usize);
 impl VirtAddr {
     pub const ZERO: Self = Self(0);
 
-    pub fn align_up(&self, page_size: usize) -> Self {
+    #[must_use]
+    pub const fn from_raw(raw: usize) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn raw(&self) -> usize {
+        self.0
+    }
+
+    #[must_use]
+    pub const fn align_up(&self, page_size: usize) -> Self {
+        debug_assert!(page_size.is_power_of_two());
         Self(helper::align_up(self.0, page_size))
+    }
+
+    #[must_use]
+    pub const fn align_down(&self, page_size: usize) -> Self {
+        debug_assert!(page_size.is_power_of_two());
+        Self(helper::align_down(self.0, page_size))
+    }
+
+    #[must_use]
+    pub const fn difference(&self, other: VirtAddr) -> isize {
+        self.0 as isize - other.0 as isize
     }
 
     #[must_use]
@@ -15,8 +38,18 @@ impl VirtAddr {
         Self(addr)
     }
 
-    pub fn offset_by(&self, amount: usize) -> Option<Self> {
-        self.0.checked_add(amount).map(Self::new)
+    #[must_use]
+    pub const fn offset_by(&self, amount: isize) -> Option<Self> {
+        let res = if amount < 0 {
+            self.0.checked_sub(amount.unsigned_abs())
+        } else {
+            self.0.checked_add(amount as usize)
+        };
+
+        match res {
+            Some(res) => Some(Self(res)),
+            None => None,
+        }
     }
 }
 
@@ -30,6 +63,8 @@ impl From<usize> for VirtAddr {
 pub struct KernelVirtAddr(VirtAddr);
 
 impl KernelVirtAddr {
+    pub const NULL: Self = Self(VirtAddr(0));
+
     pub fn new<A: Into<VirtAddr>>(addr: A) -> Result<Self, Error> {
         // TODO(aeryz): only accept if its a direct map?
         // How about kernel text? Maybe this should better be able to represent all high
@@ -37,8 +72,17 @@ impl KernelVirtAddr {
         Ok(Self(addr.into()))
     }
 
+    pub fn offset_by(&self, amount: isize) -> Option<Self> {
+        self.0
+            .offset_by(amount)
+            .map(Self::new)
+            .transpose()
+            .unwrap_or(None)
+    }
+
     /// Returns error if the address is not aligned for `T`.
-    pub fn as_ptr<T>(&self) -> Result<*const T, Error> {
+    #[must_use]
+    pub const fn as_ptr<T>(&self) -> Result<*const T, Error> {
         if self.check_aligned::<T>() {
             Ok(self.raw() as *const T)
         } else {
@@ -47,7 +91,8 @@ impl KernelVirtAddr {
     }
 
     /// Returns error if the address is not aligned for `T`.
-    pub fn as_ptr_mut<T>(&self) -> Result<*mut T, Error> {
+    #[must_use]
+    pub const fn as_ptr_mut<T>(&self) -> Result<*mut T, Error> {
         if self.check_aligned::<T>() {
             Ok(self.raw() as *mut T)
         } else {
@@ -56,15 +101,19 @@ impl KernelVirtAddr {
     }
 
     #[must_use]
-    #[inline(always)]
-    pub fn check_aligned<T>(&self) -> bool {
+    pub const fn check_aligned<T>(&self) -> bool {
         self.raw() % core::mem::align_of::<T>() == 0
     }
 
     #[must_use]
-    #[inline(always)]
-    fn raw(&self) -> usize {
+    const fn raw(&self) -> usize {
         self.0.0
+    }
+}
+
+impl From<KernelVirtAddr> for VirtAddr {
+    fn from(value: KernelVirtAddr) -> Self {
+        value.0
     }
 }
 
