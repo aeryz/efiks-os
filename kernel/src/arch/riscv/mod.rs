@@ -10,12 +10,12 @@ use riscv::registers::Satp;
 
 use crate::{
     arch::{
-        Architecture, MemoryModel, PhysicalAddressOf, VirtualAddressOf,
         mmu::{PageTable, PhysicalAddress, VirtualAddress},
         trap::{
             trap::{trap_entry, trap_resume},
             trap_frame::TrapFrame,
         },
+        Architecture, MemoryModel, PageSize, PhysicalAddressOf, VirtualAddressOf,
     },
     mm::{self, KernelVirtAddr, VirtAddr},
 };
@@ -188,5 +188,75 @@ impl MemoryModel for Riscv {
 
     fn set_root_page_table(val: usize) {
         mmu::set_root_page_table(val);
+    }
+
+    fn map_vm(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+        pa: Self::PhysicalAddress,
+        flags: mmu::PteFlags,
+    ) {
+        let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
+
+        root_pt.map_vm(va, pa, flags);
+    }
+
+    fn map_vm_with_page_size(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+        pa: Self::PhysicalAddress,
+        flags: mmu::PteFlags,
+        page_size: PageSize,
+    ) {
+        let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
+
+        root_pt.map_vm_with_page_size(va, pa, flags, page_size);
+    }
+
+    fn map_vm_2m(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+        pa: Self::PhysicalAddress,
+        flags: mmu::PteFlags,
+    ) {
+        let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
+
+        root_pt.map_vm_2m(va, pa, flags);
+    }
+
+    fn map_vm_1g(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+        pa: Self::PhysicalAddress,
+        flags: mmu::PteFlags,
+    ) {
+        let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
+
+        root_pt.map_vm_1g(va, pa, flags);
+    }
+
+    fn remap_vm(root_pt: Self::VirtualAddress, va: Self::VirtualAddress, flags: mmu::PteFlags) {
+        let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
+
+        root_pt.remap_vm(va, flags);
+    }
+
+    fn translate(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+    ) -> Option<Self::PhysicalAddress> {
+        let root_pt = unsafe { root_pt.as_ptr::<PageTable>().as_ref().unwrap() };
+
+        root_pt.translate(va)
+    }
+
+    fn traverse_free(root_pt: Self::PhysicalAddress) {
+        PageTable::traverse_free(root_pt);
+    }
+
+    fn initialize_empty_pt(root_pt: Self::VirtualAddress) {
+        unsafe {
+            *(root_pt.as_ptr_mut()) = PageTable::empty();
+        }
     }
 }
