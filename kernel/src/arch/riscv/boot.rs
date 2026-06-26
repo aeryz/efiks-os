@@ -14,12 +14,15 @@ static EARLY_PT: PageTable = {
             .union(PteFlags::D),
     );
 
+    let kernel_start =
+        unsafe { PhysicalAddress::from_raw_unchecked(mm::KERNEL_IMAGE_START_PA.raw()) };
+
     page_table.set_entry(
         (mm::KERNEL_IMAGE_START_PA.raw() >> 30) & 0x1ff,
-        pte.set_physical_address(mm::KERNEL_IMAGE_START_PA),
+        pte.set_physical_address(kernel_start),
     );
 
-    page_table.set_entry(510, pte.set_physical_address(mm::KERNEL_IMAGE_START_PA));
+    page_table.set_entry(510, pte.set_physical_address(kernel_start));
 
     page_table.set_entry(
         511,

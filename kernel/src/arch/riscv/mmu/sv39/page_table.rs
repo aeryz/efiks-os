@@ -143,7 +143,7 @@ impl PageTable {
             Self::traverse_free(child);
         }
 
-        mm::free_frame(root_pt);
+        mm::free_frame(root_pt.into());
     }
 
     fn traverse_mut(&mut self, base: usize, cb: fn(leaf_pt: *mut PageTable)) {
@@ -285,7 +285,7 @@ impl PageTable {
         unsafe {
             *page_table_ptr = PageTable::empty();
         }
-        *pte = PageTableEntry::new_valid().set_physical_address(pa);
+        *pte = PageTableEntry::new_valid().set_physical_address(pa.into());
         page_table_ptr
     }
 }
