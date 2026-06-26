@@ -113,6 +113,14 @@ pub trait MemoryModel {
     fn initialize_empty_pt(root_pt: Self::VirtualAddress);
 
     // TODO(aeryz): get these PteFlags out o sv39
+    fn map_vm_early(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+        pa: Self::PhysicalAddress,
+        flags: mmu::PteFlags,
+    );
+
+    // TODO(aeryz): get these PteFlags out o sv39
     fn map_vm(
         root_pt: Self::VirtualAddress,
         va: Self::VirtualAddress,

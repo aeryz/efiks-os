@@ -110,7 +110,7 @@ impl MemoryManager {
         for _ in 0..8 {
             va = va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?;
 
-            self.map_allocate_page(va, PteFlags::RW | PteFlags::U);
+            self.map_allocate_page(va, PteFlags::RW | PteFlags::U)?;
         }
 
         // TODO(aeryz): why -0x60 here and how's this gonna effect the alignment
@@ -131,7 +131,7 @@ impl MemoryManager {
                 kernel_stack_va
                     .offset_by(PAGE_SIZE as isize)
                     .ok_or(Error::Overflow)?,
-            );
+            )?;
 
             // We don't do mapping here because we already did `kvm_full_map` which maps the
             // entire memory with 1GB pages
@@ -156,9 +156,7 @@ impl MemoryManager {
     ) -> Result<PhysicalAddressOf<Arch>, Error> {
         let pa = alloc_frame().unwrap();
 
-        unsafe {
-            (*self.root_pt_ptr()).map_vm(va.into(), pa, flags);
-        };
+        MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), va.into(), pa, flags);
 
         self.insert_mapping(va, va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?)?;
 
@@ -185,9 +183,7 @@ impl MemoryManager {
 
                 let pa = alloc_frame().unwrap();
                 zero_frame(pa);
-                unsafe {
-                    (*self.root_pt_ptr()).map_vm(addr.into(), pa, flags);
-                }
+                MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), addr.into(), pa, flags);
 
                 regions.insert(
                     i,
@@ -216,9 +212,7 @@ impl MemoryManager {
     /// Remap a previously mapped page. This is used for overriding the flags
     /// basically.
     pub fn remap_page(&mut self, va: VirtAddr, flags: PteFlags) {
-        unsafe {
-            (*self.root_pt_ptr()).remap_vm(va.into(), flags);
-        };
+        MemoryModelOf::<Arch>::remap_vm(self.root_pt_virt().into(), va.into(), flags);
     }
 
     /// Frees up all the memory and removes all the internal refs.
@@ -238,18 +232,15 @@ impl MemoryManager {
     }
 
     pub fn translate_to_kernel(&self, va: VirtAddr) -> Result<KernelVirtAddr, Error> {
-        KernelVirtAddr::new(unsafe {
-            phys_to_virt(
-                (*self.root_pt_ptr())
-                    .translate(va.into())
-                    .ok_or(Error::Todo)?
-                    .raw(),
-            )
-        })
+        KernelVirtAddr::new(phys_to_virt(self.translate(va).ok_or(Error::Todo)?.raw()))
     }
 
     pub fn translate(&self, va: VirtAddr) -> Option<PhysicalAddressOf<Arch>> {
-        unsafe { (*self.root_pt_ptr()).translate(va.into()) }
+        MemoryModelOf::<Arch>::translate(self.root_pt_virt().into(), va.into())
+    }
+
+    fn root_pt_virt(&self) -> VirtAddr {
+        VirtAddr::new(phys_to_virt(self.root_pt.raw()))
     }
 }
 
