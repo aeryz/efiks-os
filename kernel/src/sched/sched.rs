@@ -103,7 +103,7 @@ pub fn schedule() {
             Arch::switch_to_user(
                 prev_ctx,
                 (&ctx.current_task.context) as *const ContextOf<Arch>,
-                ctx.current_task.mm.root_pt,
+                ctx.current_task.mm.root_pt.into(),
             );
         }
         None => {

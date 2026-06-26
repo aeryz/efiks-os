@@ -3,11 +3,8 @@
 
 use crate::{
     Arch,
-    arch::{
-        Architecture, MemoryModel, MemoryModelOf,
-        mmu::{PhysicalAddress, PteFlags},
-    },
-    mm::{self, KernelVirtAddr, VirtAddr, frame_allocator, kernel_allocator},
+    arch::{Architecture, MemoryModel, MemoryModelOf, mmu::PteFlags},
+    mm::{self, KernelVirtAddr, PhysAddr, VirtAddr, frame_allocator, kernel_allocator},
 };
 use ksync::SpinLock;
 
@@ -66,14 +63,14 @@ pub fn early_init() {
     for _ in 0..n_text_pages {
         MemoryModelOf::<Arch>::map_vm_early(
             (*root_pt).into(),
-            text_start.to_identical_va().unwrap(),
-            text_start,
+            VirtAddr::new(text_start.raw()).into(),
+            text_start.into(),
             PteFlags::RWX,
         );
-        text_start = unsafe { PhysicalAddress::from_raw_unchecked(text_start.raw() + 0x1000) };
+        text_start = text_start.offset_by(0x1000).unwrap();
     }
 
-    Arch::set_root_page_table_pa(root_pt_pa);
+    Arch::set_root_page_table_pa(root_pt_pa.into());
 
     // 192K kernel heap
     {
@@ -108,9 +105,9 @@ pub fn kvm_full_map(root_pt: VirtAddr) {
         let va = mm::KERNEL_DIRECT_MAPPING_BASE
             .offset_by((i * GB) as isize)
             .expect("this is already a bounded op");
-        let pa = unsafe { PhysicalAddress::from_raw_unchecked(i * GB) };
+        let pa = PhysAddr::new(i * GB);
 
-        MemoryModelOf::<Arch>::map_vm_1g(root_pt.into(), va.into(), pa, PteFlags::RW);
+        MemoryModelOf::<Arch>::map_vm_1g(root_pt.into(), va.into(), pa.into(), PteFlags::RW);
     }
 
     // kernel image
@@ -119,10 +116,10 @@ pub fn kvm_full_map(root_pt: VirtAddr) {
         let va = mm::KERNEL_IMAGE_START_VA
             .offset_by((i * GB) as isize)
             .expect("this is already a bounded op");
-        let pa = unsafe {
-            PhysicalAddress::from_raw_unchecked(mm::KERNEL_IMAGE_START_PA.raw() + i * GB)
-        };
+        let pa = mm::KERNEL_IMAGE_START_PA
+            .offset_by((i * GB) as isize)
+            .expect("already a bounded op");
 
-        MemoryModelOf::<Arch>::map_vm_1g(root_pt.into(), va.into(), pa, PteFlags::RWX);
+        MemoryModelOf::<Arch>::map_vm_1g(root_pt.into(), va.into(), pa.into(), PteFlags::RWX);
     }
 }

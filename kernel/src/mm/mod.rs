@@ -16,10 +16,7 @@ pub use mappings::*;
 
 use crate::{
     Arch,
-    arch::{
-        Architecture, MemoryModel, MemoryModelOf, PhysicalAddressOf,
-        mmu::{PageTable, PhysicalAddress, PteFlags},
-    },
+    arch::{Architecture, MemoryModel, MemoryModelOf, mmu::PteFlags},
     error::Error,
 };
 
@@ -35,7 +32,7 @@ pub struct VmRegion {
 }
 
 pub struct MemoryManager {
-    pub root_pt: PhysicalAddressOf<Arch>,
+    pub root_pt: PhysAddr,
     /// **Sorted** mapped regions
     pub regions: SpinLock<Vec<VmRegion>>,
     pub start_brk: VirtAddr,
@@ -48,7 +45,7 @@ pub struct MemoryManager {
 // dynamically figure that it should reserve 1 2MB and 10 4KB pages?
 impl MemoryManager {
     pub const EMPTY: Self = Self {
-        root_pt: PhysicalAddress::ZERO,
+        root_pt: PhysAddr::ZERO,
         regions: SpinLock::new(Vec::new()),
         start_brk: VirtAddr::ZERO,
         brk: SpinLock::new(VirtAddr::ZERO),
@@ -118,8 +115,8 @@ impl MemoryManager {
             .ok_or(Error::Overflow)
     }
 
-    pub fn create_kernel_stack(&self) -> Result<PhysicalAddressOf<Arch>, Error> {
-        let mut kernel_stack_top = PhysicalAddress::ZERO;
+    pub fn create_kernel_stack(&self) -> Result<PhysAddr, Error> {
+        let mut kernel_stack_top = PhysAddr::ZERO;
         // 32KB kernel stack
         for _ in 0..8 {
             // TODO(aeryz): With the following logic, we cannot guarantee a 16KB contiguous
@@ -136,7 +133,7 @@ impl MemoryManager {
             // We don't do mapping here because we already did `kvm_full_map` which maps the
             // entire memory with 1GB pages
 
-            kernel_stack_top = PhysicalAddress::from_raw(kernel_stack.raw() + 0xfa0).unwrap();
+            kernel_stack_top = kernel_stack.offset_by(0xfa0).unwrap();
         }
 
         Ok(kernel_stack_top)
@@ -149,14 +146,10 @@ impl MemoryManager {
 
     /// Allocates a single 4k physical page, maps `va` to it and adds it to the
     /// regions.
-    pub fn map_allocate_page(
-        &self,
-        va: VirtAddr,
-        flags: PteFlags,
-    ) -> Result<PhysicalAddressOf<Arch>, Error> {
+    pub fn map_allocate_page(&self, va: VirtAddr, flags: PteFlags) -> Result<PhysAddr, Error> {
         let pa = alloc_frame().unwrap();
 
-        MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), va.into(), pa, flags);
+        MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), va.into(), pa.into(), flags);
 
         self.insert_mapping(va, va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?)?;
 
@@ -183,7 +176,12 @@ impl MemoryManager {
 
                 let pa = alloc_frame().unwrap();
                 zero_frame(pa);
-                MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), addr.into(), pa, flags);
+                MemoryModelOf::<Arch>::map_vm(
+                    self.root_pt_virt().into(),
+                    addr.into(),
+                    pa.into(),
+                    flags,
+                );
 
                 regions.insert(
                     i,
@@ -228,15 +226,15 @@ impl MemoryManager {
             free_frame(pa);
         }
 
-        PageTable::traverse_free(self.root_pt);
+        MemoryModelOf::<Arch>::traverse_free(self.root_pt.into());
     }
 
     pub fn translate_to_kernel(&self, va: VirtAddr) -> Result<KernelVirtAddr, Error> {
         KernelVirtAddr::new(phys_to_virt(self.translate(va).ok_or(Error::Todo)?.raw()))
     }
 
-    pub fn translate(&self, va: VirtAddr) -> Option<PhysicalAddressOf<Arch>> {
-        MemoryModelOf::<Arch>::translate(self.root_pt_virt().into(), va.into())
+    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
+        MemoryModelOf::<Arch>::translate(self.root_pt_virt().into(), va.into()).map(Into::into)
     }
 
     fn root_pt_virt(&self) -> VirtAddr {
@@ -244,7 +242,7 @@ impl MemoryManager {
     }
 }
 
-fn zero_frame(pa: PhysicalAddressOf<Arch>) {
+fn zero_frame(pa: PhysAddr) {
     unsafe {
         ptr::write_bytes(phys_to_virt(pa.raw()) as *mut u8, 0, PAGE_SIZE);
     }
