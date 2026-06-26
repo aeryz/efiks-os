@@ -4,8 +4,8 @@
 use crate::{
     Arch,
     arch::{
-        Architecture, MemoryModel,
-        mmu::{PageTable, PageTableEntry, PhysicalAddress, PteFlags},
+        Architecture, MemoryModel, MemoryModelOf,
+        mmu::{PhysicalAddress, PteFlags},
     },
     mm::{self, KernelVirtAddr, VirtAddr, frame_allocator, kernel_allocator},
 };
@@ -14,7 +14,7 @@ use ksync::SpinLock;
 pub const KB: usize = 1 << 10;
 pub const GB: usize = 1 << 30;
 
-static KERNEL_ROOT_PAGE_TABLE: SpinLock<PageTable> = SpinLock::new(PageTable::empty());
+static KERNEL_ROOT_PAGE_TABLE: SpinLock<VirtAddr> = SpinLock::new(VirtAddr::ZERO);
 
 unsafe extern "C" {
     static __text_start: u8;
@@ -52,26 +52,28 @@ pub fn early_init() {
         unsafe { mm::kernel_text_virt_to_phys_raw(&__kernel_end as *const u8 as usize) };
     frame_allocator::init(memory_start);
 
+    let mut root_pt = KERNEL_ROOT_PAGE_TABLE.lock();
+    let root_pt_pa = mm::alloc_frame().unwrap();
+    *root_pt = VirtAddr::new(root_pt_pa.raw());
+    MemoryModelOf::<Arch>::initialize_empty_pt((*root_pt).into());
+
     let text_end = unsafe { mm::kernel_text_virt_to_phys_raw(&__text_end as *const u8 as usize) };
     let mut text_start =
         unsafe { mm::kernel_text_virt_to_phys_raw(&__text_start as *const u8 as usize) };
     let n_text_pages = (text_end.raw() - text_start.raw()) / KB + 1;
 
-    let root_pt_ptr = {
-        let mut root_pt = KERNEL_ROOT_PAGE_TABLE.lock();
-        kvm_full_map(&mut root_pt);
-        for _ in 0..n_text_pages {
-            root_pt.map_vm_early(
-                text_start.to_identical_va().unwrap(),
-                text_start,
-                PteFlags::RWX,
-            );
-            text_start = unsafe { PhysicalAddress::from_raw_unchecked(text_start.raw() + 0x1000) };
-        }
-        &*root_pt as *const PageTable as usize
-    };
+    kvm_full_map(*root_pt);
+    for _ in 0..n_text_pages {
+        MemoryModelOf::<Arch>::map_vm_early(
+            (*root_pt).into(),
+            text_start.to_identical_va().unwrap(),
+            text_start,
+            PteFlags::RWX,
+        );
+        text_start = unsafe { PhysicalAddress::from_raw_unchecked(text_start.raw() + 0x1000) };
+    }
 
-    Arch::set_root_page_table_pa(mm::kernel_text_virt_to_phys_raw(root_pt_ptr));
+    Arch::set_root_page_table_pa(root_pt_pa);
 
     // 192K kernel heap
     {
@@ -90,40 +92,37 @@ pub fn early_init() {
     }
 
     Arch::bump_sp(mm::KERNEL_DIRECT_MAPPING_BASE.raw());
+
+    *root_pt = VirtAddr::new(mm::phys_to_virt(root_pt_pa.raw()));
 }
 
 /// Maps the whole memory starting from `mm::KERNEL_DIRECT_MAPPING_BASE` and
 /// maps the kernel text as executable so that we don't need to switch page
 /// tables during traps.
 pub fn kvm_full_map(root_pt: VirtAddr) {
-    let va = mm::KERNEL_DIRECT_MAPPING_BASE;
+    let direct_mapping_size =
+        mm::KERNEL_IMAGE_START_VA.difference(mm::KERNEL_DIRECT_MAPPING_BASE) as usize;
+    debug_assert!(direct_mapping_size % GB == 0);
 
-    let base_pte =
-        PageTableEntry::empty().set_flags(PteFlags::V | PteFlags::RW | PteFlags::A | PteFlags::D);
-
-    let mut i = 0;
-    for p_i in va.vpn_2()..510 {
+    for i in 0..(direct_mapping_size / GB) {
+        let va = mm::KERNEL_DIRECT_MAPPING_BASE
+            .offset_by((i * GB) as isize)
+            .expect("this is already a bounded op");
         let pa = unsafe { PhysicalAddress::from_raw_unchecked(i * GB) };
-        page_table.set_entry(p_i, base_pte.clone().set_physical_address(pa));
-        i += 1;
+
+        MemoryModelOf::<Arch>::map_vm_1g(root_pt.into(), va.into(), pa, PteFlags::RW);
     }
 
     // kernel image
     // TODO(aeryz): for convenience, will just have 2 1GB RWX tables
-    let mut i = 0;
-    for p_i in 510..512 {
+    for i in 0..2 {
+        let va = mm::KERNEL_IMAGE_START_VA
+            .offset_by((i * GB) as isize)
+            .expect("this is already a bounded op");
         let pa = unsafe {
             PhysicalAddress::from_raw_unchecked(mm::KERNEL_IMAGE_START_PA.raw() + i * GB)
         };
 
-        page_table.set_entry(
-            p_i,
-            base_pte
-                .clone()
-                .set_flags(PteFlags::RX)
-                .set_physical_address(pa),
-        );
-
-        i += 1;
+        MemoryModelOf::<Arch>::map_vm_1g(root_pt.into(), va.into(), pa, PteFlags::RWX);
     }
 }

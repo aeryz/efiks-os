@@ -1,6 +1,6 @@
 use crate::arch::{
-    mmu::{PageTableEntry, PteFlags, VirtualAddress},
     PageSize,
+    mmu::{PageTableEntry, PteFlags, VirtualAddress},
 };
 use crate::mm::{self, KERNEL_DIRECT_MAPPING_BASE};
 

@@ -207,7 +207,10 @@ fn create_initial_stack(
     let stack_len = strings_len + (1 + argv.len() + 1) * size_of::<usize>();
     assert!(stack_len <= stack_top.difference(stack_page_start) as usize);
 
-    let final_sp = (stack_top.offset_by(stack_len as isize).ok_or(Error::Todo)?).align_down(0xf);
+    let final_sp = stack_top
+        .offset_by(-(stack_len as isize))
+        .ok_or(Error::Todo)?
+        .align_down(16);
     assert!(final_sp >= stack_page_start);
     let mut argv_user_ptrs = Vec::new();
 
@@ -222,7 +225,7 @@ fn create_initial_stack(
             .as_ptr_mut()?;
         unsafe {
             core::ptr::copy_nonoverlapping((*arg).as_ptr(), string_ptr, arg.len());
-            *string_ptr = 0;
+            *string_ptr.add(arg.len()) = 0;
         }
 
         argv_user_ptrs.push(string_cursor);

@@ -10,12 +10,12 @@ use riscv::registers::Satp;
 
 use crate::{
     arch::{
+        Architecture, MemoryModel, PageSize, PhysicalAddressOf, VirtualAddressOf,
         mmu::{PageTable, PhysicalAddress, VirtualAddress},
         trap::{
             trap::{trap_entry, trap_resume},
             trap_frame::TrapFrame,
         },
-        Architecture, MemoryModel, PageSize, PhysicalAddressOf, VirtualAddressOf,
     },
     mm::{self, KernelVirtAddr, VirtAddr},
 };
@@ -258,5 +258,16 @@ impl MemoryModel for Riscv {
         unsafe {
             *(root_pt.as_ptr_mut()) = PageTable::empty();
         }
+    }
+
+    fn map_vm_early(
+        root_pt: Self::VirtualAddress,
+        va: Self::VirtualAddress,
+        pa: Self::PhysicalAddress,
+        flags: mmu::PteFlags,
+    ) {
+        let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
+
+        root_pt.map_vm_early(va, pa, flags);
     }
 }
