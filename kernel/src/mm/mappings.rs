@@ -1,4 +1,4 @@
-use crate::{mm::address::PhysAddr, mm::address::VirtAddr};
+use crate::{mm::addr::PhysAddr, mm::addr::VirtAddr};
 
 pub const KERNEL_IMAGE_START_VA: VirtAddr = VirtAddr::new(0xffff_ffff_8000_0000);
 
