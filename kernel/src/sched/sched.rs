@@ -11,7 +11,7 @@ use ksync::SpinLock;
 
 use crate::{
     Arch,
-    arch::{Architecture, ContextOf, TrapFrame, TrapFrameOf},
+    arch::{Architecture, ContextOf, TrapFrame},
     percpu::{self, PerCoreContext},
     task::{self, Pid, Task, TaskState},
 };
@@ -157,8 +157,7 @@ pub fn enqueue_new_task(task: &Arc<Task>) {
     unsafe {
         // TODO(aeryz): smelly
         task.trap_frame
-            .as_ptr_mut::<TrapFrameOf<Arch>>()
-            .unwrap()
+            .as_ptr_mut()
             .as_mut()
             .unwrap()
             .set_per_core_ctx(core_ctx as *const PerCoreContext as usize);

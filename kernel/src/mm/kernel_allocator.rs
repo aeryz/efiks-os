@@ -3,7 +3,7 @@ use core::{alloc::GlobalAlloc, mem::MaybeUninit};
 use kmalloc::{KernelAllocator as _, LinkedListAllocator};
 use ksync::SpinLock;
 
-use crate::mm::KernelVirtAddr;
+use crate::mm::VirtAddr;
 
 type KernelAllocator = LinkedListAllocator;
 
@@ -15,7 +15,7 @@ struct Allocator(SpinLock<MaybeUninit<LinkedListAllocator>>);
 unsafe impl Send for Allocator {}
 unsafe impl Sync for Allocator {}
 
-pub fn init(start_addr: KernelVirtAddr, end_addr: KernelVirtAddr) {
+pub fn init(start_addr: VirtAddr, end_addr: VirtAddr) {
     let allocator = unsafe { KernelAllocator::new(start_addr.raw(), end_addr.raw()).unwrap() };
     *ALLOCATOR.0.lock() = MaybeUninit::new(allocator);
 }
