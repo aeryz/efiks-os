@@ -1,9 +1,11 @@
 mod kernel_ptr;
 mod phys_addr;
+mod user_buf;
 mod user_ptr;
 mod virt_addr;
 
 pub use kernel_ptr::*;
 pub use phys_addr::*;
+pub use user_buf::*;
 pub use user_ptr::*;
 pub use virt_addr::*;
