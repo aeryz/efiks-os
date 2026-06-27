@@ -6,7 +6,7 @@ use crate::{
     arch::{Architecture, Context, ContextOf, TrapFrame, TrapFrameOf},
     error::{self, Error},
     exec,
-    mm::{self, KernelVirtAddr, MemoryManager, PAGE_SIZE, VirtAddr},
+    mm::{self, KernelPtr, MemoryManager, PAGE_SIZE, VirtAddr},
     sched,
     task::{self, AtomicTaskState, Pid, TaskState, file_table::FileTable},
 };
@@ -15,7 +15,7 @@ use crate::{
 pub struct Task {
     /// Process ID
     pub pid: Pid,
-    pub trap_frame: KernelVirtAddr,
+    pub trap_frame: KernelPtr<TrapFrameOf<Arch>>,
     /// Pointer to the context
     pub context: ContextOf<Arch>,
     /// The current state of the process
@@ -40,7 +40,7 @@ pub struct TaskRuntime {
 }
 
 pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
-    let kernel_stack = KernelVirtAddr::new(mm::phys_to_virt(mm::alloc_frame()?.raw()))?;
+    let kernel_stack = VirtAddr::new(mm::phys_to_virt(mm::alloc_frame()?.raw()));
 
     let context = ContextOf::<Arch>::initialize(
         entry,
@@ -49,7 +49,7 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
 
     Ok(task::add_task(Task {
         pid: Pid::create_next(),
-        trap_frame: KernelVirtAddr::NULL,
+        trap_frame: KernelPtr::NULL,
         context,
         state: TaskState::Ready.into(),
         mm: MemoryManager::EMPTY,
@@ -75,10 +75,10 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
 
     let kernel_stack = mm::phys_to_virt(mm_.create_kernel_stack()?.raw());
 
-    let trap_frame = KernelVirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>())?;
+    let trap_frame = KernelPtr::new(VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>()))?;
 
     unsafe {
-        *(trap_frame.as_ptr_mut()?) = TrapFrameOf::<Arch>::initialize(entry_va, user_sp);
+        *(trap_frame.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(entry_va, user_sp);
     }
 
     let context = ContextOf::<Arch>::initialize(
@@ -219,10 +219,12 @@ fn create_initial_stack(
         string_cursor = string_cursor
             .offset_by(-((arg.len() + 1) as isize))
             .ok_or(Error::Todo)?;
-        let string_ptr = stack_top_kernel
-            .offset_by(string_cursor.difference(stack_top))
-            .ok_or(Error::Todo)?
-            .as_ptr_mut()?;
+        let string_ptr = KernelPtr::<u8>::new(
+            stack_top_kernel
+                .offset_by(string_cursor.difference(stack_top))
+                .ok_or(Error::Todo)?,
+        )?
+        .as_ptr_mut();
         unsafe {
             core::ptr::copy_nonoverlapping((*arg).as_ptr(), string_ptr, arg.len());
             *string_ptr.add(arg.len()) = 0;
@@ -232,10 +234,12 @@ fn create_initial_stack(
     }
     argv_user_ptrs.reverse();
 
-    let frame_ptr = stack_top_kernel
-        .offset_by(final_sp.difference(stack_top))
-        .ok_or(Error::Todo)?
-        .as_ptr_mut()?;
+    let frame_ptr = KernelPtr::<usize>::new(
+        stack_top_kernel
+            .offset_by(final_sp.difference(stack_top))
+            .ok_or(Error::Todo)?,
+    )?
+    .as_ptr_mut();
 
     unsafe {
         *frame_ptr = argv.len();

@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
-use crate::mm::{KernelVirtAddr, VirtAddr};
+use crate::mm::VirtAddr;
 
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {
@@ -53,7 +53,7 @@ pub trait Architecture {
 
     /// The address where a first time spawned process jump to,
     /// should be right after calling the trap handler in the trap entry
-    fn trap_resume_ptr() -> KernelVirtAddr;
+    fn trap_resume_ptr() -> VirtAddr;
 
     fn setup_unpriviledged_mode();
 

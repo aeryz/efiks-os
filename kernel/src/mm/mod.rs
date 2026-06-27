@@ -229,8 +229,10 @@ impl MemoryManager {
         MemoryModelOf::<Arch>::traverse_free(self.root_pt.into());
     }
 
-    pub fn translate_to_kernel(&self, va: VirtAddr) -> Result<KernelVirtAddr, Error> {
-        KernelVirtAddr::new(phys_to_virt(self.translate(va).ok_or(Error::Todo)?.raw()))
+    pub fn translate_to_kernel(&self, va: VirtAddr) -> Result<VirtAddr, Error> {
+        Ok(VirtAddr::new(phys_to_virt(
+            self.translate(va).ok_or(Error::Todo)?.raw(),
+        )))
     }
 
     pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
