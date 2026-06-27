@@ -1,4 +1,4 @@
-mod address;
+mod addr;
 mod frame_allocator;
 mod kernel_allocator;
 mod kvm;
@@ -6,7 +6,7 @@ mod mappings;
 
 use core::ptr;
 
-pub use address::*;
+pub use addr::*;
 use alloc::vec::Vec;
 #[allow(unused)]
 pub use frame_allocator::{alloc_frame, free_frame};
