@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use crate::{
     Arch,
     arch::{Architecture, TrapFrame, TrapFrameOf},
-    mm::VirtAddr,
+    mm::{UserPtr, VirtAddr},
     percpu, sched, task,
 };
 
@@ -39,11 +39,11 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
     match syscall {
         Syscall::Write => {
             let fd = tf.get_arg::<0>();
-            let buf_ptr = tf.get_arg::<1>() as *const u8;
+            let buf_ptr = UserPtr::new(tf.get_arg::<1>());
             let count = tf.get_arg::<2>();
 
             // TODO(aeryz): we want to set error when buf_ptr == NULL?
-            if buf_ptr == core::ptr::null() || count == 0 {
+            if buf_ptr.is_null() || count == 0 {
                 tf.set_syscall_return_value(0);
                 return;
             }
@@ -67,7 +67,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             let mut buf = Vec::new();
             buf.resize(count, 0);
 
-            let n_buf = copy_from_user(buf_ptr, buf.as_mut_ptr(), usize::MAX);
+            let n_buf = copy_from_user(buf_ptr, buf.as_mut_ptr(), usize::MAX).unwrap();
 
             let count = file.lock().write(&buf[0..n_buf]).unwrap_or(usize::MAX);
 
@@ -75,7 +75,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
         }
         Syscall::Read => {
             let fd = tf.get_arg::<0>();
-            let buf = tf.get_arg::<1>() as *mut u8;
+            let user_buf = UserPtr::new(tf.get_arg::<1>());
             let count = tf.get_arg::<2>();
 
             let this_ctx = unsafe {
@@ -94,10 +94,11 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                 return;
             };
 
-            let count = file
-                .lock()
-                .read(unsafe { core::slice::from_raw_parts_mut(buf, count) })
-                .unwrap_or(usize::MAX);
+            let mut buf = Vec::new();
+            buf.resize(count, 0u8);
+
+            let count = file.lock().read(&mut buf).unwrap_or(usize::MAX);
+            copy_into_user(&buf[0..count], user_buf).unwrap();
 
             tf.set_syscall_return_value(count);
         }
@@ -111,16 +112,17 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
         }
         Syscall::Spawn => {
             let pid_ptr = tf.get_arg::<0>() as *mut task::Pid;
-            let path_ptr = tf.get_arg::<1>() as *const u8;
+            let path_ptr = UserPtr::new(tf.get_arg::<1>());
             let argv_ptr = tf.get_arg::<2>() as *const *const u8;
 
-            if pid_ptr == ptr::null_mut() || path_ptr == ptr::null() || argv_ptr == ptr::null() {
+            if pid_ptr == ptr::null_mut() || path_ptr.is_null() || argv_ptr == ptr::null() {
                 tf.set_syscall_return_value(usize::MAX);
                 return;
             }
 
             let mut path = [0; vfs::MAX_FILE_PATH_LENGTH];
-            let n_path = copy_from_user(path_ptr, path.as_mut_ptr(), vfs::MAX_FILE_PATH_LENGTH);
+            let n_path =
+                copy_from_user(path_ptr, path.as_mut_ptr(), vfs::MAX_FILE_PATH_LENGTH).unwrap();
             if n_path == 0 {
                 tf.set_syscall_return_value(usize::MAX);
                 return;
@@ -136,7 +138,7 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
                 let mut arg = Vec::new();
                 arg.resize(strlen_user(arg_ptr), 0);
-                copy_from_user(arg_ptr, arg.as_mut_ptr(), arg.len());
+                // copy_from_user(arg_ptr, arg.as_mut_ptr(), arg.len()).unwrap();
                 argv_storage.push(arg);
                 i += 1;
             }
@@ -213,19 +215,31 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
     }
 }
 
+// TODO: maybe put this in `mm`?
 /// Copies from user buffer until it sees NULL.
-pub fn copy_from_user(user_ptr: *const u8, dest_ptr: *mut u8, max: usize) -> usize {
+pub fn copy_from_user(user_ptr: UserPtr, dest_ptr: *mut u8, max: usize) -> Option<usize> {
     for i in 0..max {
         unsafe {
-            let b = *user_ptr.add(i);
+            let b = *(user_ptr.offset_by(i as isize)?.raw() as *const u8);
             if b == 0 {
-                return i;
+                return Some(i);
             }
             *dest_ptr.add(i) = b;
         }
     }
 
-    0
+    Some(0)
+}
+
+/// Copies into user
+pub fn copy_into_user(buf: &[u8], user_ptr: UserPtr) -> Option<usize> {
+    for (i, b) in buf.iter().enumerate() {
+        unsafe {
+            *(user_ptr.offset_by(i as isize)?.raw() as *mut u8) = *b;
+        }
+    }
+
+    Some(0)
 }
 
 fn strlen_user(user_ptr: *const u8) -> usize {
