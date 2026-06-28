@@ -9,6 +9,8 @@ pub enum Error {
     /// Errors that are undecided yet
     Todo,
     Oom,
+    NotFound,
+    InvalidArgs,
 }
 
 impl From<vfs::VfsError> for Error {
