@@ -199,9 +199,7 @@ fn create_initial_stack(
     let stack_page_start = stack_top.align_down(PAGE_SIZE);
     let stack_top_kernel = mm_
         .translate_to_kernel(user_sp)
-        .expect("created by the kernel")
-        .offset_by(stack_top.difference(stack_page_start))
-        .ok_or(Error::Todo)?;
+        .expect("created by the kernel");
 
     let strings_len = argv.iter().map(|arg| arg.len() + 1).sum::<usize>();
     let stack_len = strings_len + (1 + argv.len() + 1) * size_of::<usize>();

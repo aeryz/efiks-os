@@ -19,7 +19,7 @@ impl<T> KernelPtr<T> {
     /// Returns `Err` if the pointer is not aligned or `null`.
     #[must_use]
     pub const fn new(addr: VirtAddr) -> Result<Self, Error> {
-        if addr.raw() == 0 || addr.raw() % core::mem::align_of::<T>() == 0 {
+        if addr.raw() != 0 && addr.raw() % core::mem::align_of::<T>() == 0 {
             Ok(Self {
                 addr,
                 _marker: PhantomData,

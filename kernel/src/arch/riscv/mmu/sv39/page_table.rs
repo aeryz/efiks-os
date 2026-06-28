@@ -106,7 +106,11 @@ impl PageTable {
             return None;
         }
         if l2_entry.is_leaf() {
-            return Some(l2_entry.physical_address());
+            return Some(unsafe {
+                PhysicalAddress::from_raw_unchecked(
+                    l2_entry.physical_address().raw() + (va.raw() & (PageSize::Size1G.bytes() - 1)),
+                )
+            });
         }
 
         let l1_pt = (l2_entry.physical_address().raw() + KERNEL_DIRECT_MAPPING_BASE.raw())
@@ -117,7 +121,11 @@ impl PageTable {
             return None;
         }
         if l1_entry.is_leaf() {
-            return Some(l1_entry.physical_address());
+            return Some(unsafe {
+                PhysicalAddress::from_raw_unchecked(
+                    l1_entry.physical_address().raw() + (va.raw() & (PageSize::Size2M.bytes() - 1)),
+                )
+            });
         }
 
         let l0_pt = (l1_entry.physical_address().raw() + KERNEL_DIRECT_MAPPING_BASE.raw())
@@ -125,7 +133,11 @@ impl PageTable {
 
         let l0_entry = unsafe { (*l0_pt).0.get_unchecked(va.vpn_0()) };
         if l0_entry.is_valid() && l0_entry.is_leaf() {
-            Some(l0_entry.physical_address())
+            Some(unsafe {
+                PhysicalAddress::from_raw_unchecked(
+                    l0_entry.physical_address().raw() + (va.raw() & (PageSize::Size4K.bytes() - 1)),
+                )
+            })
         } else {
             None
         }

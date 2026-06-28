@@ -4,7 +4,7 @@ pub mod mmu;
 pub mod plic;
 pub mod trap;
 
-use core::{cell::OnceCell, ptr::NonNull};
+use core::ptr::NonNull;
 
 use riscv::registers::Satp;
 
