@@ -31,14 +31,17 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
         return;
     };
 
-    match syscall {
+    let ret = match syscall {
         Syscall::Write => {
             let fd = tf.get_arg::<0>();
             let buf = UserBuf::new(tf.get_arg::<1>())
                 .ok_or(Error::InvalidArgs)
                 .unwrap();
             let count = tf.get_arg::<2>();
-            let _ = do_syscall_write(fd, buf, count);
+
+            do_syscall_write(fd, buf, count)
+                .map(|n| n as isize)
+                .unwrap_or(-1)
         }
         Syscall::Read => {
             let fd = tf.get_arg::<0>();
@@ -46,38 +49,41 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
                 .ok_or(Error::InvalidArgs)
                 .unwrap();
             let count = tf.get_arg::<2>();
-            let _ = do_syscall_read(fd, buf, count);
+            do_syscall_read(fd, buf, count)
+                .map(|n| n as isize)
+                .unwrap_or(-1)
         }
         Syscall::Shutdown => do_syscall_shutdown(),
         Syscall::SleepMs => {
             let time_ms = tf.get_arg::<0>();
             do_syscall_sleep_ms(time_ms);
+            0
         }
         Syscall::Spawn => {
             let out_pid = UserPtr::<task::Pid>::new(tf.get_arg::<0>());
-            let Some(path) = UserBuf::new(tf.get_arg::<1>()) else {
-                tf.set_syscall_return_value(usize::MAX);
-                return;
-            };
+            let path = UserBuf::new(tf.get_arg::<1>()).unwrap();
             let argv: UserPtr<UserPtr<u8>> = UserPtr::new(tf.get_arg::<2>());
-            let _ = do_syscall_spawn(path, argv, out_pid);
+            do_syscall_spawn(path, argv, out_pid)
+                .map(|_| 0)
+                .unwrap_or(-1)
         }
         Syscall::Exit => {
             let exit_code = tf.get_arg::<0>() as i32;
-            let _ = do_syscall_exit(exit_code);
+            do_syscall_exit(exit_code);
+            0
         }
-        Syscall::Wait => {
-            let _ = do_syscall_wait();
-        }
+        Syscall::Wait => do_syscall_wait().map(|n| n as isize).unwrap_or(-1),
         // TODO(aeryz): Shouldn't this supposed to be `Brk`?
         Syscall::Sbrk => {
             let brk = tf.get_arg::<0>() as usize;
-            let _ = do_syscall_brk(brk);
+            do_syscall_brk(brk).map(|n| n as isize).unwrap_or(-1)
         }
         _ => panic!(
             "Unhandled syscall. Yes, this is kernel failure because want to stop and take care of it at this time"
         ),
-    }
+    };
+
+    tf.set_syscall_return_value(ret);
 }
 
 fn load_core_ctx<'a>() -> &'a percpu::PerCoreContext {

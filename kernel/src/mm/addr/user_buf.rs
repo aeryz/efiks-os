@@ -4,8 +4,6 @@ use crate::mm::VirtAddr;
 pub struct UserBuf(VirtAddr);
 
 impl UserBuf {
-    pub const NULL: Self = Self(VirtAddr::new(0));
-
     #[must_use]
     pub const fn new(addr: usize) -> Option<Self> {
         if addr != 0 {
@@ -50,12 +48,14 @@ impl UserBufMut {
         }
     }
 
+    #[allow(unused)]
     pub unsafe fn copy_from_user(&self, dest: &mut [u8]) {
         unsafe {
             self.0.copy_from_user(dest);
         }
     }
 
+    #[allow(unused)]
     pub unsafe fn copy_from_user_until(
         &self,
         dest: &mut [u8],
