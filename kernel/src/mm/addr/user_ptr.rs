@@ -2,10 +2,21 @@ use core::marker::PhantomData;
 
 use crate::mm::VirtAddr;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UserPtr<T> {
     addr: VirtAddr,
-    _marker: PhantomData<T>,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Copy for UserPtr<T> {}
+
+impl<T> Clone for UserPtr<T> {
+    fn clone(&self) -> Self {
+        Self {
+            addr: self.addr,
+            _marker: self._marker,
+        }
+    }
 }
 
 impl<T> UserPtr<T> {
@@ -49,6 +60,30 @@ impl<T> UserPtr<T> {
         }
     }
 
+    pub unsafe fn copy_from_user_many_until(
+        &self,
+        dest: &mut [T],
+        should_stop: fn(*const T) -> bool,
+    ) -> Option<usize> {
+        let mut cur_ptr = self.raw();
+        for dest_idx in 0..dest.len() {
+            if should_stop(cur_ptr as *const T) {
+                return Some(dest_idx);
+            }
+            let dest_item = &mut dest[dest_idx];
+            let dest_ptr = dest_item as *mut T;
+            for i in 0..size_of::<T>() {
+                unsafe {
+                    let b = *((cur_ptr + i) as *const u8);
+                    *(dest_ptr as *mut u8).add(i) = b;
+                }
+            }
+            cur_ptr += size_of::<T>();
+        }
+
+        None
+    }
+
     /// Copies from kernel to userspace. Note that this copy is shallow.
     /// Safety:
     ///  - `self` is valid in the current active page table.
@@ -61,5 +96,30 @@ impl<T> UserPtr<T> {
                 *((self.raw() + i) as *mut u8) = b;
             }
         }
+    }
+}
+
+impl<T> UserPtr<UserPtr<T>> {
+    #[must_use]
+    pub fn iter(&self) -> UserPtrIterator<T> {
+        UserPtrIterator { cur: *self }
+    }
+}
+
+pub struct UserPtrIterator<T> {
+    cur: UserPtr<UserPtr<T>>,
+}
+
+impl<T> Iterator for UserPtrIterator<T> {
+    type Item = UserPtr<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.cur.offset(1)?;
+        let mut ret = UserPtr::new(0);
+        unsafe {
+            self.cur.copy_from_user(&mut ret);
+        }
+        self.cur = next;
+        Some(ret)
     }
 }

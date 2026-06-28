@@ -1,4 +1,4 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::vec::Vec;
 
 use crate::{
     Arch,
@@ -23,10 +23,6 @@ pub enum Syscall {
     End,
 }
 
-// TODO(aeryz): We don't want to implement the syscalls here. They should
-// directly be implemented in their respective subsystem.
-#[unsafe(no_mangle)]
-#[inline(never)]
 pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
     let syscall_number = tf.get_syscall();
     let syscall = if syscall_number < Syscall::End as usize {
@@ -58,93 +54,13 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
             do_syscall_sleep_ms(time_ms);
         }
         Syscall::Spawn => {
-            let pid_ptr = UserPtr::<task::Pid>::new(tf.get_arg::<0>());
-            let Some(path_buf) = UserBuf::new(tf.get_arg::<1>()) else {
+            let out_pid = UserPtr::<task::Pid>::new(tf.get_arg::<0>());
+            let Some(path) = UserBuf::new(tf.get_arg::<1>()) else {
                 tf.set_syscall_return_value(usize::MAX);
                 return;
             };
-            let argv_ptr: UserPtr<usize> = UserPtr::new(tf.get_arg::<2>());
-
-            if pid_ptr.is_null() || argv_ptr.is_null() {
-                tf.set_syscall_return_value(usize::MAX);
-                return;
-            }
-
-            let mut path = [0; vfs::MAX_FILE_PATH_LENGTH];
-            let Some(n_path) = (unsafe { path_buf.copy_from_user_until(&mut path, |b| b == 0) })
-            else {
-                tf.set_syscall_return_value(usize::MAX);
-                return;
-            };
-            if n_path == 0 {
-                tf.set_syscall_return_value(usize::MAX);
-                return;
-            }
-
-            let mut arg = Vec::new();
-            // TODO(aeryz): this is temporary max
-            arg.resize(256, 0);
-
-            let mut argv_storage = Vec::new();
-            let mut i = 0;
-            loop {
-                let Some(cur_arg_ptr) = argv_ptr.offset(i) else {
-                    tf.set_syscall_return_value(usize::MAX);
-                    return;
-                };
-                let mut arg_addr = 0;
-                unsafe {
-                    cur_arg_ptr.copy_from_user(&mut arg_addr);
-                }
-                if arg_addr == 0 {
-                    break;
-                }
-
-                let Some(arg_ptr) = UserBuf::new(arg_addr) else {
-                    tf.set_syscall_return_value(usize::MAX);
-                    return;
-                };
-                let Some(n_copied) =
-                    (unsafe { arg_ptr.copy_from_user_until(&mut arg, |b| b == 0) })
-                else {
-                    tf.set_syscall_return_value(usize::MAX);
-                    return;
-                };
-                argv_storage.push(arg[0..n_copied].to_vec());
-                i += 1;
-            }
-
-            let mut argv = Vec::new();
-            for arg in &argv_storage {
-                argv.push(arg.as_slice());
-            }
-
-            log::info!("spawn path is: {}", unsafe {
-                str::from_utf8_unchecked(&path)
-            });
-
-            let this_ctx = unsafe {
-                Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
-                    .as_mut()
-                    .unwrap()
-            };
-
-            unsafe {
-                pid_ptr.copy_into_user(&match task::spawn(
-                    &path[..n_path],
-                    &argv,
-                    Some(&this_ctx.current_task),
-                ) {
-                    Ok(pid) => pid,
-                    Err(e) => {
-                        log::error!("couldn't spawn due to {e:?}");
-                        tf.set_syscall_return_value(usize::MAX);
-                        return;
-                    }
-                });
-            }
-
-            tf.set_syscall_return_value(0);
+            let argv: UserPtr<UserPtr<u8>> = UserPtr::new(tf.get_arg::<2>());
+            let _ = do_syscall_spawn(path, argv, out_pid);
         }
         Syscall::Exit => {
             let exit_code = tf.get_arg::<0>() as i32;
@@ -262,4 +178,51 @@ fn do_syscall_brk(brk: usize) -> Result<usize, Error> {
     let new_brk = task.mm.brk(VirtAddr::new(brk)).unwrap().raw();
     log::debug!("new brk: 0x{new_brk:x}");
     Ok(new_brk)
+}
+
+fn do_syscall_spawn(
+    path: UserBuf,
+    argv: UserPtr<UserPtr<u8>>,
+    out_pid: UserPtr<task::Pid>,
+) -> Result<(), Error> {
+    let mut kpath = [0; vfs::MAX_FILE_PATH_LENGTH];
+    let n_path = unsafe {
+        path.copy_from_user_until(&mut kpath, |b| b == 0)
+            .ok_or(Error::InvalidArgs)?
+    };
+
+    if n_path == 0 {
+        return Err(Error::InvalidArgs);
+    }
+
+    let mut kargv = Vec::new();
+
+    let mut argv_iter = argv.iter();
+    while let Some(current_arg) = argv_iter.next() {
+        if current_arg.is_null() {
+            break;
+        }
+
+        // TODO(aeryz): define a max
+        let mut karg = [0; 128];
+        let n_read = unsafe {
+            current_arg
+                .copy_from_user_many_until(&mut karg, |item| *item == 0)
+                .ok_or(Error::InvalidArgs)?
+        };
+        kargv.push(karg[0..n_read].to_vec());
+    }
+
+    let args: Vec<&[u8]> = kargv.iter().map(|v| v.as_slice()).collect();
+    let pid = task::spawn(
+        &kpath[0..n_path],
+        &args,
+        Some(&load_core_ctx().current_task),
+    )?;
+
+    unsafe {
+        out_pid.copy_into_user(&pid);
+    }
+
+    Ok(())
 }
