@@ -1,5 +1,3 @@
-use alloc::boxed::Box;
-
 use efiks_types::{Errno, IntoError};
 
 #[derive(Debug)]
@@ -11,12 +9,13 @@ pub enum Error {
     InvalidArgs,
     Unmapped,
     NoSys,
-    Other(Box<dyn IntoError>),
+    Errno(Errno),
+    Other(&'static dyn IntoError),
 }
 
-impl<T: IntoError + 'static> From<T> for Error {
+impl<T: IntoError> From<T> for Error {
     fn from(value: T) -> Self {
-        Self::Other(Box::new(value))
+        Self::Errno(value.to_errno())
     }
 }
 
@@ -30,6 +29,7 @@ impl From<Error> for Errno {
             Error::InvalidArgs => Self::EInval,
             Error::Unmapped => Self::EFault,
             Error::NoSys => Self::ENoSys,
+            Error::Errno(errno) => errno,
             Error::Other(err) => err.to_errno(),
         }
     }
