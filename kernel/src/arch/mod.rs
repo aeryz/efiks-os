@@ -169,7 +169,7 @@ pub trait TrapFrame {
 
     fn get_syscall(&self) -> usize;
 
-    fn set_syscall_return_value(&mut self, ret: usize);
+    fn set_syscall_return_value(&mut self, ret: isize);
 
     fn get_arg<const I: usize>(&self) -> usize;
 

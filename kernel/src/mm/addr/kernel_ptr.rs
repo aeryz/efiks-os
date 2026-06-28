@@ -30,6 +30,7 @@ impl<T> KernelPtr<T> {
     }
 
     #[must_use]
+    #[allow(unused)]
     pub const fn as_ptr(&self) -> *const T {
         self.addr() as *const T
     }
