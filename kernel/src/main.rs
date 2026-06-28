@@ -65,7 +65,7 @@ extern "C" fn kmain(hartid: usize, dtb_address: usize) -> ! {
 
     percpu::set_core_ctxs(core_ctxs);
 
-    task::spawn(b"/foo/sample_prog", &[], None).unwrap();
+    task::spawn(b"/foo/shell", &[], None).unwrap();
 
     #[cfg(feature = "multi-core")]
     {

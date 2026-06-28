@@ -7,10 +7,14 @@
         .efiks_lib_zig = .{
             .path = "efiks-lib/zig",
         },
+        .shell = .{
+            .path = "userspace/zig/shell",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "efiks-lib/zig",
+        "userspace/zig/shell",
     },
 }
