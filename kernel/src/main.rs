@@ -12,6 +12,7 @@ mod arch;
 pub mod console;
 mod debug;
 mod driver;
+mod errno;
 pub mod error;
 pub mod exec;
 mod helper;

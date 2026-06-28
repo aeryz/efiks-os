@@ -1,5 +1,6 @@
 use crate::{
     arch::{self, Riscv},
+    errno::Errno,
     mm::VirtAddr,
 };
 

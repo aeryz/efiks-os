@@ -44,7 +44,7 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
 
     let context = ContextOf::<Arch>::initialize(
         entry,
-        kernel_stack.offset_by(0xfa0).ok_or(Error::Todo)?.into(),
+        kernel_stack.offset_by(0xfa0).ok_or(Error::Overflow)?.into(),
     );
 
     Ok(task::add_task(Task {
@@ -207,7 +207,7 @@ fn create_initial_stack(
 
     let final_sp = stack_top
         .offset_by(-(stack_len as isize))
-        .ok_or(Error::Todo)?
+        .ok_or(Error::Overflow)?
         .align_down(16);
     assert!(final_sp >= stack_page_start);
     let mut argv_user_ptrs = Vec::new();
@@ -216,11 +216,11 @@ fn create_initial_stack(
     for arg in argv.iter().rev() {
         string_cursor = string_cursor
             .offset_by(-((arg.len() + 1) as isize))
-            .ok_or(Error::Todo)?;
+            .ok_or(Error::Overflow)?;
         let string_ptr = KernelPtr::<u8>::new(
             stack_top_kernel
                 .offset_by(string_cursor.difference(stack_top))
-                .ok_or(Error::Todo)?,
+                .ok_or(Error::Overflow)?,
         )?
         .as_ptr_mut();
         unsafe {
@@ -235,7 +235,7 @@ fn create_initial_stack(
     let frame_ptr = KernelPtr::<usize>::new(
         stack_top_kernel
             .offset_by(final_sp.difference(stack_top))
-            .ok_or(Error::Todo)?,
+            .ok_or(Error::Overflow)?,
     )?
     .as_ptr_mut();
 

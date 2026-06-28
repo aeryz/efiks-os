@@ -1,4 +1,4 @@
-use crate::exec;
+use crate::{errno::Errno, exec};
 
 #[derive(Debug)]
 pub enum Error {
@@ -6,11 +6,11 @@ pub enum Error {
     Elf(exec::elf::Error),
     Unaligned,
     Overflow,
-    /// Errors that are undecided yet
-    Todo,
     Oom,
     NotFound,
     InvalidArgs,
+    Unmapped,
+    NoSys,
 }
 
 impl From<vfs::VfsError> for Error {
@@ -22,5 +22,21 @@ impl From<vfs::VfsError> for Error {
 impl From<exec::elf::Error> for Error {
     fn from(value: exec::elf::Error) -> Self {
         Self::Elf(value)
+    }
+}
+
+impl From<Error> for Errno {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Vfs(_) => Self::EIO,
+            Error::Elf(_) => Self::ENoExec,
+            Error::Unaligned => Self::EInval,
+            Error::Overflow => Self::EOverflow,
+            Error::Oom => Self::ENoMem,
+            Error::NotFound => Self::ENoEnt,
+            Error::InvalidArgs => Self::EInval,
+            Error::Unmapped => Self::EFault,
+            Error::NoSys => Self::ENoSys,
+        }
     }
 }

@@ -200,7 +200,7 @@ impl MemoryManager {
     fn insert_mapping(&self, start: VirtAddr, end: VirtAddr) -> Result<(), Error> {
         let mut regions = self.regions.lock();
         match regions.binary_search_by_key(&start, |va| va.start) {
-            Ok(_) => return Err(Error::Todo),
+            Ok(_) => panic!("Mapping an already existing entry again must be handled."),
             Err(i) => regions.insert(i, VmRegion { start, end }),
         }
 
@@ -231,7 +231,7 @@ impl MemoryManager {
 
     pub fn translate_to_kernel(&self, va: VirtAddr) -> Result<VirtAddr, Error> {
         Ok(VirtAddr::new(phys_to_virt(
-            self.translate(va).ok_or(Error::Todo)?.raw(),
+            self.translate(va).ok_or(Error::Unmapped)?.raw(),
         )))
     }
 

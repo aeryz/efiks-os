@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
-use crate::mm::VirtAddr;
+use crate::{errno::Errno, mm::VirtAddr};
 
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {

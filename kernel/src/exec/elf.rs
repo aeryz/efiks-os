@@ -66,7 +66,7 @@ pub fn load_executable(path: &[u8], mm_: &mut MemoryManager) -> Result<VirtAddr,
         let mut aligned_vaddr = VirtAddr::new(ph.p_vaddr as usize).align_down(PAGE_SIZE);
         let aligned_vaddr_end = VirtAddr::new(ph.p_vaddr as usize)
             .offset_by(ph.p_memsz as isize)
-            .ok_or(error::Error::Todo)?
+            .ok_or(error::Error::Overflow)?
             .align_up(PAGE_SIZE);
         max_aligned_vaddr_end = core::cmp::max(max_aligned_vaddr_end, aligned_vaddr_end);
 
@@ -95,7 +95,7 @@ pub fn load_executable(path: &[u8], mm_: &mut MemoryManager) -> Result<VirtAddr,
 
             aligned_vaddr = aligned_vaddr
                 .offset_by(PAGE_SIZE as isize)
-                .ok_or(error::Error::Todo)?;
+                .ok_or(error::Error::Overflow)?;
         }
 
         // Based on the segment's size on the disc, we copy it to the `vaddr` that we
