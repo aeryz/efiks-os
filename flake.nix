@@ -5,9 +5,10 @@
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, crane }:
       flake-utils.lib.eachSystem
       (with flake-utils.lib.system; [ x86_64-linux ])
       (system: 
@@ -35,6 +36,8 @@
             cargo = rust-toolchain;
             rustc = rust-toolchain;
           };
+
+          craneLib = (crane.mkLib pkgs).overrideToolchain rust-toolchain;
 
           bindgen = rustPlatform.buildRustPackage rec {
             pname = "bindgen-cli";
@@ -97,6 +100,10 @@
       '';
     };
 
-  packages.opensbi = riscvPkgs.opensbi;
+  packages.riscv-opensbi = riscvPkgs.opensbi;
+  packages.riscv-kernel = import ./kernel/package.nix {
+    inherit pkgs craneLib;
+  };
+  packages.default = self.packages.${system}.riscv-kernel;
   });
 }
