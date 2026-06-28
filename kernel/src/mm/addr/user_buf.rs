@@ -64,7 +64,7 @@ impl UserBufMut {
         unsafe { self.0.copy_from_user_until(dest, should_stop) }
     }
 
-    pub unsafe fn copy_into_user(&mut self, src: &[u8]) {
+    pub unsafe fn copy_into_user(&self, src: &[u8]) {
         for (i, b) in src.iter().enumerate() {
             unsafe {
                 *((self.0.0.raw() + i) as *mut u8) = *b;
