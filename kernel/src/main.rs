@@ -12,7 +12,6 @@ mod arch;
 pub mod console;
 mod debug;
 mod driver;
-mod errno;
 pub mod error;
 pub mod exec;
 mod helper;
@@ -22,7 +21,6 @@ mod sched;
 mod serial_log;
 mod syscall;
 mod task;
-mod userspace;
 mod vfs;
 
 use alloc::{sync::Arc, vec::Vec};

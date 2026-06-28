@@ -4,6 +4,7 @@ use alloc::{
     collections::btree_map::{BTreeMap, Entry},
     vec::Vec,
 };
+use efiks_types::{Errno, IntoError};
 use elf::{
     abi::{self, ET_EXEC, PT_LOAD},
     endian::LittleEndian,
@@ -28,6 +29,19 @@ pub enum Error {
     InvalidProgramHeader,
     InvalidVirtualAddress,
     Parse(elf::ParseError),
+}
+
+impl IntoError for Error {
+    fn to_errno(&self) -> Errno {
+        match self {
+            Error::SizeOverflow => Errno::EOverflow,
+            Error::Unsupported
+            | Error::NoProgramHeadersFound
+            | Error::InvalidProgramHeader
+            | Error::InvalidVirtualAddress
+            | Error::Parse(_) => Errno::ENoExec,
+        }
+    }
 }
 
 pub struct Elf {

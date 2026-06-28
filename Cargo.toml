@@ -1,5 +1,14 @@
 [workspace]
-members = ["kernel", "riscv", "ksync", "kmalloc", "vsfs", "vfs", "efiks-lib/rust"]
+members = [
+    "kernel",
+    "riscv",
+    "ksync",
+    "kmalloc",
+    "vsfs",
+    "vfs",
+    "efiks-lib/rust",
+    "types",
+]
 resolver = "3"
 
 [workspace.package]
@@ -13,4 +22,5 @@ kmalloc = { path = "./kmalloc", default-features = false }
 bitflags = "2.11.0"
 vsfs = { path = "./vsfs", default-features = false }
 vfs = { path = "./vfs", default-features = false }
+efiks-types = { path = "./types", default-features = false }
 log = "0.4.29"

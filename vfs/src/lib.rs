@@ -14,6 +14,7 @@
 #![no_std]
 
 use alloc::sync::Arc;
+use efiks_types::{Errno, IntoError};
 
 extern crate alloc;
 
@@ -44,6 +45,16 @@ pub enum VfsError {
     OutOfBounds,
     /// Catch-all for errors that do not yet have a precise variant.
     Unknown,
+}
+
+impl IntoError for VfsError {
+    fn to_errno(&self) -> Errno {
+        match self {
+            Self::DeviceIO | Self::Fs | Self::Unknown => Errno::EIO,
+            Self::OutOfBounds => Errno::EOverflow,
+            Self::AlreadyMounted => Errno::EBusy,
+        }
+    }
 }
 
 /// A filesystem node exposed through the VFS.

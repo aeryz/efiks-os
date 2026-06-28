@@ -1,9 +1,10 @@
 [package]
 name = "vfs"
-version = "0.1.0"
+version = "0.0.0"
 license.workspace = true
 edition.workspace = true
 
 [dependencies]
 bitflags = { workspace = true }
 ksync = { workspace = true }
+efiks-types = { workspace = true }

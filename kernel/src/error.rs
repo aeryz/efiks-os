@@ -1,9 +1,9 @@
-use crate::{errno::Errno, exec};
+use alloc::boxed::Box;
+
+use efiks_types::{Errno, IntoError};
 
 #[derive(Debug)]
 pub enum Error {
-    Vfs(vfs::VfsError),
-    Elf(exec::elf::Error),
     Unaligned,
     Overflow,
     Oom,
@@ -11,25 +11,18 @@ pub enum Error {
     InvalidArgs,
     Unmapped,
     NoSys,
+    Other(Box<dyn IntoError>),
 }
 
-impl From<vfs::VfsError> for Error {
-    fn from(value: vfs::VfsError) -> Self {
-        Self::Vfs(value)
-    }
-}
-
-impl From<exec::elf::Error> for Error {
-    fn from(value: exec::elf::Error) -> Self {
-        Self::Elf(value)
+impl<T: IntoError + 'static> From<T> for Error {
+    fn from(value: T) -> Self {
+        Self::Other(Box::new(value))
     }
 }
 
 impl From<Error> for Errno {
     fn from(value: Error) -> Self {
         match value {
-            Error::Vfs(_) => Self::EIO,
-            Error::Elf(_) => Self::ENoExec,
             Error::Unaligned => Self::EInval,
             Error::Overflow => Self::EOverflow,
             Error::Oom => Self::ENoMem,
@@ -37,6 +30,7 @@ impl From<Error> for Errno {
             Error::InvalidArgs => Self::EInval,
             Error::Unmapped => Self::EFault,
             Error::NoSys => Self::ENoSys,
+            Error::Other(err) => err.to_errno(),
         }
     }
 }

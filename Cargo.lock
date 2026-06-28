@@ -52,7 +52,11 @@ dependencies = [
 
 [[package]]
 name = "efiks-lib"
-version = "0.1.0"
+version = "0.0.0"
+
+[[package]]
+name = "efiks-types"
+version = "0.0.0"
 
 [[package]]
 name = "elf"
@@ -74,10 +78,11 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "kernel"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bitflags",
  "cc",
+ "efiks-types",
  "elf",
  "kmalloc",
  "ksync",
@@ -90,14 +95,14 @@ dependencies = [
 
 [[package]]
 name = "kmalloc"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "ksync"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "log"
@@ -131,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "riscv"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bitfields",
 ]
@@ -246,15 +251,16 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "vfs"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bitflags",
+ "efiks-types",
  "ksync",
 ]
 
 [[package]]
 name = "vsfs"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bitflags",
  "derivative",

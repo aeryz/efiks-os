@@ -3,11 +3,11 @@ use alloc::vec::Vec;
 use crate::{
     Arch,
     arch::{Architecture, TrapFrame, TrapFrameOf},
-    errno::Errno,
     error::Error,
     mm::{UserBuf, UserBufMut, UserPtr, VirtAddr},
     percpu, sched, task,
 };
+use efiks_types::Errno;
 
 pub(crate) const SYS_WRITE: usize = 1;
 pub(crate) const SYS_READ: usize = 2;
