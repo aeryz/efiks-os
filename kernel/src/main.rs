@@ -34,6 +34,7 @@ use crate::{
         virtio::{self, block::VirtioBlkDriver},
     },
     mm::VirtAddr,
+    percpu::PerCoreContext,
 };
 
 core::arch::global_asm!(include_str!("start.s"));
@@ -93,8 +94,12 @@ extern "C" fn core_boot_entry(core: usize) -> ! {
     log::trace!("trap handler initiated");
 
     let core_ctx = percpu::get_core(core);
+    unsafe {
+        (*core_ctx.idle_task.thread_info.per_cpu_ctx.get()) =
+            core_ctx as *const _ as *mut PerCoreContext;
+    }
     Arch::set_per_cpu_ctx_ptr(VirtAddr::new(
-        core_ctx as *const percpu::PerCoreContext as usize,
+        core_ctx.idle_task.as_ref() as *const _ as usize
     ));
 
     Arch::init_uart(core_ctx.core_id);

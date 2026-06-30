@@ -34,8 +34,8 @@ trap_entry:
 
 // On user threads, user sp needs to be stored and kernel sp needs to be loaded
 save_user_stack:
-    sd sp, (0*8)tp
-    ld sp, (1*8)tp
+    sd sp, 0*8(tp)
+    ld sp, 1*8(tp)
 
 save_trapframe:
     // Allocate the stack pointer to fit the trapframe
@@ -45,14 +45,14 @@ save_trapframe:
     // Otherwise, there is no guarantee that our registers will not be
     // altered with. (had a painful experience with this)
 
-    // // read the user sp
-    // csrr ra, sscratch
-    // sd ra,  1*8(sp)
-    // // then restore the ra
-    // ld ra,  0*8(sp)
+    // read the user tp
+    csrr ra, sscratch
+    sd ra,  3*8(sp)
+    // then restore the ra
+    ld ra,  0*8(sp)
     sd ra,  0*8(sp)
     sd gp,  2*8(sp)
-    sd tp,  3*8(sp)
+    // sd tp,  3*8(sp)
     sd t0,  4*8(sp)
     sd t1,  5*8(sp)
     sd t2,  6*8(sp)
@@ -103,7 +103,7 @@ trap_resume:
 
     ld ra,  0*8(sp)
     ld gp,  2*8(sp)
-    ld tp,  3*8(sp)
+    // ld tp,  3*8(sp)
     // t0 and t1 are restored at the end because trap return needs scratch
     // registers to decide whether this was a user or kernel trap.
     ld t2,  6*8(sp)
@@ -136,17 +136,18 @@ trap_resume:
     addi sp, sp, {TRAPFRAME_SIZE}
 
     // If saved sstatus.SPP is set, the trap came from supervisor mode.
-    // Kernel traps use sscratch = 0; user traps use sscratch = kernel_sp.
+    // Kernel traps use sscratch = 0; user traps use sscratch = thread_info ptr.
     ld t0, -{SAVED_SSTATUS_FROM_TOP}(sp)
     li t1, {SSTATUS_SPP_MASK}
     and t0, t0, t1
     bnez t0, ret_kernel
 
 ret_userspace:
-    csrw sscratch, sp
+    csrw sscratch, tp
     ld t0, -{SAVED_T0_FROM_TOP}(sp)
     ld t1, -{SAVED_T1_FROM_TOP}(sp)
-    ld sp, 0*8(tp)
+    ld tp,  3*8(sp)
+    ld sp, -{SAVED_SP_FROM_TOP}(sp)
     sret
 
 ret_kernel:
@@ -157,7 +158,7 @@ ret_kernel:
     sret
         "#,
 TRAPFRAME_SIZE = const size_of::<TrapFrame>(),
-// SAVED_SP_FROM_TOP = const (size_of::<TrapFrame>() - 1 * 8),
+SAVED_SP_FROM_TOP = const (size_of::<TrapFrame>() - 1 * 8),
 SAVED_T0_FROM_TOP = const (size_of::<TrapFrame>() - 4 * 8),
 SAVED_T1_FROM_TOP = const (size_of::<TrapFrame>() - 5 * 8),
 SAVED_SSTATUS_FROM_TOP = const (size_of::<TrapFrame>() - 33 * 8),
