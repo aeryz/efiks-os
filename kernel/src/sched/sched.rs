@@ -11,7 +11,7 @@ use ksync::SpinLock;
 
 use crate::{
     Arch,
-    arch::{Architecture, ContextOf, TrapFrame},
+    arch::Architecture,
     percpu::{self, PerCoreContext},
     task::{self, Pid, Task, TaskState},
 };
@@ -63,11 +63,7 @@ pub fn init_per_core_scheduler() -> PerCoreScheduler {
 /// will continue to run.
 pub fn schedule() {
     log::trace!("Scheduling..");
-    let ctx = unsafe {
-        Arch::load_this_cpu_ctx::<PerCoreContext>()
-            .as_mut()
-            .expect("expected a valid reference to the per-CPU context")
-    };
+    let ctx = load_core_ctx_mut();
 
     let mut sched = ctx.scheduler.lock();
     log::trace!("sched queue len: {}", sched.runqueue.len());
@@ -96,13 +92,12 @@ pub fn schedule() {
             sched.last_entrance_time = Arch::read_current_time();
             drop(sched);
 
-            let prev_ctx =
-                (&ctx.current_task.context) as *const ContextOf<Arch> as *mut ContextOf<Arch>;
+            let prev_ctx = ctx.current_task.as_ref() as *const Task;
             ctx.current_task = new_task;
 
             Arch::switch_to_user(
                 prev_ctx,
-                (&ctx.current_task.context) as *const ContextOf<Arch>,
+                ctx.current_task.as_ref() as *const Task,
                 ctx.current_task.mm.root_pt.into(),
             );
         }
@@ -122,8 +117,7 @@ pub fn schedule() {
             }
             log::trace!("current task is not ready, we are gonna switch to idle task");
 
-            let prev_ctx =
-                (&ctx.current_task.context) as *const ContextOf<Arch> as *mut ContextOf<Arch>;
+            let prev_ctx = ctx.current_task.as_ref() as *const Task;
             ctx.current_task = Arc::clone(&ctx.idle_task);
             ctx.idle_task.state.set(TaskState::Running);
             log::trace!("idle task is set to running");
@@ -131,7 +125,7 @@ pub fn schedule() {
             sched.last_entrance_time = Arch::read_current_time();
             drop(sched);
             Arch::set_kernel_sp(None);
-            Arch::switch_to(prev_ctx, (&ctx.idle_task.context) as *const ContextOf<Arch>);
+            Arch::switch_to(prev_ctx, ctx.idle_task.as_ref() as *const Task);
         }
     }
 }
@@ -155,7 +149,7 @@ pub fn enqueue_new_task(task: &Arc<Task>) {
     let core_ctx = percpu::get_core(idx);
 
     unsafe {
-        *task.thread_info.per_cpu_ctx.get() = core_ctx as *const PerCoreContext;
+        *task.thread_info.per_cpu_ctx.get() = core_ctx as *const _ as *mut PerCoreContext;
     }
 
     core_ctx
@@ -166,11 +160,7 @@ pub fn enqueue_new_task(task: &Arc<Task>) {
 }
 
 pub fn on_timer_interrupt() {
-    let ctx = unsafe {
-        Arch::load_this_cpu_ctx::<PerCoreContext>()
-            .as_ref()
-            .expect("expected a valid reference to the per-CPU context")
-    };
+    let ctx = load_core_ctx();
 
     let mut some_task_woke_up = false;
     let current_time = Arch::read_current_time();
@@ -251,11 +241,7 @@ pub fn on_external_irq(irq: u32) {
 
 /// Yields execution when a task gets blocked because of an external irq
 pub fn block_on_external_irq(irq: u32) {
-    let ctx = unsafe {
-        Arch::load_this_cpu_ctx::<PerCoreContext>()
-            .as_mut()
-            .expect("expected a valid reference to the per-CPU context")
-    };
+    let ctx = load_core_ctx_mut();
 
     ctx.current_task.state.set(TaskState::Blocked);
 
@@ -298,11 +284,7 @@ pub fn on_task_exit(task: &Arc<Task>) {
 }
 
 pub fn sleep_current_task(time_ms: usize) {
-    let ctx = unsafe {
-        Arch::load_this_cpu_ctx::<PerCoreContext>()
-            .as_mut()
-            .expect("expected a valid reference to the per-CPU context")
-    };
+    let ctx = load_core_ctx_mut();
 
     ctx.current_task.state.set(TaskState::Sleeping);
     // Setting an invalid time s.t. it overflows will result in this task to be
@@ -320,6 +302,20 @@ pub fn sleep_current_task(time_ms: usize) {
         .push(Arc::downgrade(&ctx.current_task));
 
     schedule();
+}
+
+pub fn load_core_ctx<'a>() -> &'a percpu::PerCoreContext {
+    unsafe {
+        let task = Arch::load_this_cpu_ctx::<Task>();
+        (*(*task).thread_info.per_cpu_ctx.get()).as_ref().unwrap()
+    }
+}
+
+fn load_core_ctx_mut<'a>() -> &'a mut percpu::PerCoreContext {
+    unsafe {
+        let task = Arch::load_this_cpu_ctx::<Task>();
+        (*(*task).thread_info.per_cpu_ctx.get()).as_mut().unwrap()
+    }
 }
 
 impl core::fmt::Debug for PerCoreScheduler {

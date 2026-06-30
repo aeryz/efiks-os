@@ -10,21 +10,22 @@ const CONTEXT_OFFSET: usize = core::mem::offset_of!(Task, context);
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
-extern "C" fn swtch_to_user(from: *const Task, to: *const Task, satp: usize) {
+pub extern "C" fn swtch_to_user(from: *const Task, to: *const Task, satp: usize) {
     core::arch::naked_asm!(
         r#"
         csrw satp, a2
         sfence.vma zero, zero
         j swtch
-        "#
+        "#,
     );
 }
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
-extern "C" fn swtch(from: *const Task, to: *const Task) {
+pub extern "C" fn swtch(from: *const Task, to: *const Task) {
     core::arch::naked_asm!(
         r#"
+        addi a0, a0, {context_offset}
         sd ra,   0*8(a0)
         sd sp,   1*8(a0)
         sd s0,   2*8(a0)
@@ -40,6 +41,8 @@ extern "C" fn swtch(from: *const Task, to: *const Task) {
         sd s10, 12*8(a0)
         sd s11, 13*8(a0)
 
+        ld tp, a1
+        addi a1, a1, {context_offset}
         ld ra,   0*8(a1)
         ld sp,   1*8(a1)
         ld s0,   2*8(a1)
@@ -56,7 +59,8 @@ extern "C" fn swtch(from: *const Task, to: *const Task) {
         ld s11, 13*8(a1)
 
         ret
-    "#
+    "#,
+        context_offset = const core::mem::offset_of!(Task, context),
     );
 }
 

@@ -18,12 +18,7 @@ extern "C" fn trap_handler(trap_frame: &mut TrapFrame) {
         // right now but this is no good.
         TrapCause::ExternalIrq => {
             log::trace!("hit external irq");
-            let hart_id = unsafe {
-                Arch::load_this_cpu_ctx::<PerCoreContext>()
-                    .as_mut()
-                    .expect("expected a valid reference to the per-CPU context")
-                    .core_id
-            };
+            let hart_id = sched::load_core_ctx().core_id;
 
             let interrupt_id = plic_claim(hart_id);
             match interrupt_id {
