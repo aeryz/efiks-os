@@ -41,7 +41,7 @@ pub extern "C" fn swtch(from: *const Task, to: *const Task) {
         sd s10, 12*8(a0)
         sd s11, 13*8(a0)
 
-        ld tp, a1
+        mv tp, a1
         addi a1, a1, {context_offset}
         ld ra,   0*8(a1)
         ld sp,   1*8(a1)
@@ -63,20 +63,6 @@ pub extern "C" fn swtch(from: *const Task, to: *const Task) {
         context_offset = const core::mem::offset_of!(Task, context),
     );
 }
-
-// a0: context ptr from
-// a1: context ptr to
-global_asm!(
-    r#"
-    .section .text.swtch_to_user
-    .globl swtch_to_user
-swtch_to_user:
-
-    .section .text.swtch
-    .globl swtch
-swtch:
-    "#
-);
 
 #[derive(Clone, Default)]
 #[repr(C)]

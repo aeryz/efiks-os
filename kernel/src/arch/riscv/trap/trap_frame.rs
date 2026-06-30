@@ -67,11 +67,15 @@ impl From<usize> for TrapCause {
 }
 
 impl arch::TrapFrame for TrapFrame {
-    fn initialize(instruction_ptr: VirtAddr, stack_ptr: VirtAddr) -> Self {
+    fn initialize(
+        instruction_ptr: VirtAddr,
+        stack_ptr: VirtAddr,
+        thread_info_ptr: VirtAddr,
+    ) -> Self {
         Self {
             sepc: instruction_ptr.raw(),
-            tp: stack_ptr.raw(),
-            // sp: stack_ptr.raw(),
+            tp: thread_info_ptr.raw(),
+            sp: stack_ptr.raw(),
             sstatus: riscv::registers::Sstatus::empty()
                 .enable_user_mode()
                 .set_spie()
