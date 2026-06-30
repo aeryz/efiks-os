@@ -34,7 +34,7 @@ pub struct Task {
 pub struct ThreadInfo {
     pub user_sp: usize,
     pub kernel_sp: usize,
-    pub per_cpu_ctx: UnsafeCell<*const PerCoreContext>,
+    pub per_cpu_ctx: UnsafeCell<*mut PerCoreContext>,
 }
 
 #[repr(C)]
@@ -62,7 +62,7 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
         thread_info: ThreadInfo {
             user_sp: 0,
             kernel_sp: kernel_stack.raw(),
-            per_cpu_ctx: UnsafeCell::new(core::ptr::null()),
+            per_cpu_ctx: UnsafeCell::new(core::ptr::null_mut()),
         },
         pid: Pid::create_next(),
         trap_frame: KernelPtr::NULL,
@@ -112,7 +112,7 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
         thread_info: ThreadInfo {
             user_sp: user_sp.raw(),
             kernel_sp: kernel_sp.raw(),
-            per_cpu_ctx: UnsafeCell::new(core::ptr::null()),
+            per_cpu_ctx: UnsafeCell::new(core::ptr::null_mut()),
         },
         pid,
         trap_frame,

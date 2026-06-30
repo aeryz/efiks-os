@@ -5,7 +5,8 @@ use crate::{
     arch::{Architecture, TrapFrame, TrapFrameOf},
     error::Error,
     mm::{UserBuf, UserBufMut, UserPtr, VirtAddr},
-    percpu, sched, task,
+    percpu, sched,
+    task::{self, Task},
 };
 use efiks_types::Errno;
 
@@ -71,14 +72,6 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
     }
 }
 
-fn load_core_ctx<'a>() -> &'a percpu::PerCoreContext {
-    unsafe {
-        Arch::load_this_cpu_ctx::<percpu::PerCoreContext>()
-            .as_ref()
-            .expect("something is very wrong if we can't do this")
-    }
-}
-
 fn do_syscall_write(
     // TODO(aeryz): what's gonna be fd type?
     fd: usize,
@@ -90,7 +83,7 @@ fn do_syscall_write(
         return Ok(0);
     }
 
-    let ctx = load_core_ctx();
+    let ctx = sched::load_core_ctx();
 
     let file = ctx
         .current_task
@@ -120,7 +113,7 @@ fn do_syscall_read(fd: usize, buf: UserBufMut, count: usize) -> Result<usize, Er
         return Ok(0);
     }
 
-    let ctx = load_core_ctx();
+    let ctx = sched::load_core_ctx();
 
     let file = ctx
         .current_task
@@ -154,18 +147,18 @@ fn do_syscall_sleep_ms(time_ms: usize) {
 }
 
 fn do_syscall_exit(exit_code: i32) {
-    let task = &load_core_ctx().current_task;
+    let task = &sched::load_core_ctx().current_task;
     task::exit(task, exit_code);
 }
 
 fn do_syscall_wait() -> Result<i32, Error> {
-    let task = &load_core_ctx().current_task;
+    let task = &sched::load_core_ctx().current_task;
     // TODO(aeryz): we should get the exit code of the child?
     task::wait(task).map(|_| 0)
 }
 
 fn do_syscall_brk(brk: usize) -> Result<usize, Error> {
-    let task = &load_core_ctx().current_task;
+    let task = &sched::load_core_ctx().current_task;
     let new_brk = task.mm.brk(VirtAddr::new(brk))?.raw();
     log::debug!("new brk: 0x{new_brk:x}");
     Ok(new_brk)
@@ -208,7 +201,7 @@ fn do_syscall_spawn(
     let pid = task::spawn(
         &kpath[0..n_path],
         &args,
-        Some(&load_core_ctx().current_task),
+        Some(&sched::load_core_ctx().current_task),
     )?;
 
     unsafe {
