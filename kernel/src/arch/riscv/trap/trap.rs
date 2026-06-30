@@ -5,6 +5,17 @@ unsafe extern "C" {
     pub fn trap_resume();
 }
 
+/*
+User-task entered trap:
+- tp contains ThreadInfo
+- sscratch contains 0
+
+
+save_trapframe:
+..
+
+*/
+
 core::arch::global_asm!(
 r#"
     .section .text.trap
@@ -13,12 +24,18 @@ r#"
     .align 2
 trap_entry:
 
-    // Swap the kernel and user stacks
-    csrrw sp, sscratch, sp
+    // Swap the TLS and ThreadInfo
+    csrrw tp, sscratch, tp
 
-    // if sp = 0, then this is a kernel process and we should load sp from scratch
-    bnez sp, save_trapframe
-    csrr sp, sscratch
+    // On kernel threads, sscratch is 0, so we just load it back in
+    bnez tp, save_user_stack
+    csrr tp, sscratch
+    j save_trapframe
+
+// On user threads, user sp needs to be stored and kernel sp needs to be loaded
+save_user_stack:
+    sd sp, (0*8)tp
+    ld sp, (1*8)tp
 
 save_trapframe:
     // Allocate the stack pointer to fit the trapframe
@@ -27,13 +44,13 @@ save_trapframe:
     // Now we can start saving the registers into the trap frame.
     // Otherwise, there is no guarantee that our registers will not be
     // altered with. (had a painful experience with this)
-    sd ra,  0*8(sp)
 
-    // read the user sp
-    csrr ra, sscratch
-    sd ra,  1*8(sp)
-    // then restore the ra
-    ld ra,  0*8(sp)
+    // // read the user sp
+    // csrr ra, sscratch
+    // sd ra,  1*8(sp)
+    // // then restore the ra
+    // ld ra,  0*8(sp)
+    sd ra,  0*8(sp)
     sd gp,  2*8(sp)
     sd tp,  3*8(sp)
     sd t0,  4*8(sp)
@@ -129,18 +146,18 @@ ret_userspace:
     csrw sscratch, sp
     ld t0, -{SAVED_T0_FROM_TOP}(sp)
     ld t1, -{SAVED_T1_FROM_TOP}(sp)
-    ld sp, -{SAVED_SP_FROM_TOP}(sp)
+    ld sp, 0*8(tp)
     sret
 
 ret_kernel:
     csrw sscratch, zero
     ld t0, -{SAVED_T0_FROM_TOP}(sp)
     ld t1, -{SAVED_T1_FROM_TOP}(sp)
-    ld sp, -{SAVED_SP_FROM_TOP}(sp)
+    ld sp, 1*8(tp)
     sret
         "#,
 TRAPFRAME_SIZE = const size_of::<TrapFrame>(),
-SAVED_SP_FROM_TOP = const (size_of::<TrapFrame>() - 1 * 8),
+// SAVED_SP_FROM_TOP = const (size_of::<TrapFrame>() - 1 * 8),
 SAVED_T0_FROM_TOP = const (size_of::<TrapFrame>() - 4 * 8),
 SAVED_T1_FROM_TOP = const (size_of::<TrapFrame>() - 5 * 8),
 SAVED_SSTATUS_FROM_TOP = const (size_of::<TrapFrame>() - 33 * 8),
