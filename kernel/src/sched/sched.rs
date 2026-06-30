@@ -155,12 +155,7 @@ pub fn enqueue_new_task(task: &Arc<Task>) {
     let core_ctx = percpu::get_core(idx);
 
     unsafe {
-        // TODO(aeryz): smelly
-        task.trap_frame
-            .as_ptr_mut()
-            .as_mut()
-            .unwrap()
-            .set_per_core_ctx(core_ctx as *const PerCoreContext as usize);
+        *task.thread_info.per_cpu_ctx.get() = core_ctx as *const PerCoreContext;
     }
 
     core_ctx

@@ -1,3 +1,5 @@
+use core::cell::UnsafeCell;
+
 use alloc::{sync::Arc, vec::Vec};
 use ksync::SpinLock;
 
@@ -7,12 +9,14 @@ use crate::{
     error::{self, Error},
     exec,
     mm::{self, KernelPtr, MemoryManager, PAGE_SIZE, VirtAddr},
+    percpu::PerCoreContext,
     sched,
     task::{self, AtomicTaskState, Pid, TaskState, file_table::FileTable},
 };
 
 #[repr(C)]
 pub struct Task {
+    pub thread_info: ThreadInfo,
     /// Process ID
     pub pid: Pid,
     pub trap_frame: KernelPtr<TrapFrameOf<Arch>>,
@@ -24,6 +28,13 @@ pub struct Task {
     /// List of open files
     pub file_table: SpinLock<FileTable>,
     pub runtime: SpinLock<TaskRuntime>,
+}
+
+#[repr(C)]
+pub struct ThreadInfo {
+    pub user_sp: usize,
+    pub kernel_sp: usize,
+    pub per_cpu_ctx: UnsafeCell<*const PerCoreContext>,
 }
 
 #[repr(C)]
@@ -48,6 +59,11 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
     );
 
     Ok(task::add_task(Task {
+        thread_info: ThreadInfo {
+            user_sp: 0,
+            kernel_sp: kernel_stack.raw(),
+            per_cpu_ctx: UnsafeCell::new(core::ptr::null()),
+        },
         pid: Pid::create_next(),
         trap_frame: KernelPtr::NULL,
         context,
@@ -78,13 +94,12 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     let trap_frame = KernelPtr::new(VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>()))?;
 
     unsafe {
-        *(trap_frame.as_ptr_mut()) = TrapFrameOf::<Arch>::initialize(entry_va, user_sp);
+        *(trap_frame.as_ptr_mut()) =
+            TrapFrameOf::<Arch>::initialize(entry_va, VirtAddr::new(0xcafebabe));
     }
 
-    let context = ContextOf::<Arch>::initialize(
-        Arch::trap_resume_ptr().into(),
-        VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>()),
-    );
+    let kernel_sp = VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>());
+    let context = ContextOf::<Arch>::initialize(Arch::trap_resume_ptr().into(), kernel_sp);
 
     let pid = Pid::create_next();
 
@@ -94,6 +109,11 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     });
 
     let task = task::add_task(Task {
+        thread_info: ThreadInfo {
+            user_sp: user_sp.raw(),
+            kernel_sp: kernel_sp.raw(),
+            per_cpu_ctx: UnsafeCell::new(core::ptr::null()),
+        },
         pid,
         trap_frame,
         context,

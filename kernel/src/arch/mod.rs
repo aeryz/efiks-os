@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
-use crate::mm::VirtAddr;
+use crate::{mm::VirtAddr, task::Task};
 
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {
@@ -41,13 +41,9 @@ pub trait Architecture {
     // TODO(aeryz): We probably don't want this like this but for now, we have this
     fn init_uart(core_id: usize);
 
-    fn switch_to(from: *mut Self::Context, to: *const Self::Context);
+    fn switch_to(from: *const Task, to: *const Task);
 
-    fn switch_to_user(
-        from: *mut Self::Context,
-        to: *const Self::Context,
-        root_pt: PhysicalAddressOf<Self>,
-    );
+    fn switch_to_user(from: *const Task, to: *const Task, root_pt: PhysicalAddressOf<Self>);
 
     fn set_per_cpu_ctx_ptr(ptr: VirtAddr);
 

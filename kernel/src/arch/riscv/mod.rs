@@ -18,6 +18,7 @@ use crate::{
         },
     },
     mm::{self, VirtAddr},
+    task::Task,
 };
 
 use context::Context;
@@ -64,15 +65,11 @@ impl Architecture for Riscv {
         plic::plic_init_uart(core_id);
     }
 
-    fn switch_to(from: *mut Self::Context, to: *const Self::Context) {
+    fn switch_to(from: *const Task, to: *const Task) {
         unsafe { context::swtch(from, to) };
     }
 
-    fn switch_to_user(
-        from: *mut Self::Context,
-        to: *const Self::Context,
-        root_pt: PhysicalAddressOf<Self>,
-    ) {
+    fn switch_to_user(from: *const Task, to: *const Task, root_pt: PhysicalAddressOf<Self>) {
         unsafe { context::swtch_to_user(from, to, mmu::pa_to_satp(root_pt)) };
     }
 
