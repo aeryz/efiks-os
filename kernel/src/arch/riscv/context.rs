@@ -1,16 +1,12 @@
-use core::arch::global_asm;
-
 use crate::{
     arch::{self, Riscv},
     mm::VirtAddr,
     task::Task,
 };
 
-const CONTEXT_OFFSET: usize = core::mem::offset_of!(Task, context);
-
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
-pub extern "C" fn swtch_to_user(from: *const Task, to: *const Task, satp: usize) {
+pub extern "C" fn swtch_to_user(from: *mut Task, to: *const Task, satp: usize) {
     core::arch::naked_asm!(
         r#"
         csrw satp, a2
@@ -22,7 +18,7 @@ pub extern "C" fn swtch_to_user(from: *const Task, to: *const Task, satp: usize)
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
-pub extern "C" fn swtch(from: *const Task, to: *const Task) {
+pub extern "C" fn swtch(from: *mut Task, to: *const Task) {
     core::arch::naked_asm!(
         r#"
         addi a0, a0, {context_offset}

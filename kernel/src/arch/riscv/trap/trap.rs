@@ -13,10 +13,10 @@ r#"
     .align 2
 trap_entry:
 
-    // Swap the TLS and ThreadInfo
+    // Swap user TLS with the current Task pointer. ThreadInfo is at offset 0.
     csrrw tp, sscratch, tp
 
-    // On kernel threads, sscratch is 0, so we just load it back in
+    // On kernel traps, sscratch is 0, so we just load it back in.
     bnez tp, save_user_stack
     csrr tp, sscratch
     j save_kernel_stack

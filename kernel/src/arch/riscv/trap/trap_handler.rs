@@ -1,13 +1,9 @@
 use crate::{
-    Arch,
     arch::{
-        Architecture,
         plic::{self, plic_claim, plic_complete},
         riscv::trap::trap_frame::{TrapCause, TrapFrame},
     },
-    driver,
-    percpu::PerCoreContext,
-    sched, syscall, task,
+    driver, sched, syscall,
 };
 
 #[unsafe(no_mangle)]

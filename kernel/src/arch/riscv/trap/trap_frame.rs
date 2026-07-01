@@ -102,8 +102,4 @@ impl arch::TrapFrame for TrapFrame {
     fn set_syscall_return_value(&mut self, ret: isize) {
         self.a0 = ret as usize;
     }
-
-    fn set_per_core_ctx(&mut self, ptr: usize) {
-        self.tp = ptr;
-    }
 }

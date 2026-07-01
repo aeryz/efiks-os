@@ -92,7 +92,7 @@ pub fn schedule() {
             sched.last_entrance_time = Arch::read_current_time();
             drop(sched);
 
-            let prev_ctx = ctx.current_task.as_ref() as *const Task;
+            let prev_ctx = ctx.current_task.as_ref() as *const Task as *mut Task;
             ctx.current_task = new_task;
 
             Arch::switch_to_user(
@@ -117,7 +117,7 @@ pub fn schedule() {
             }
             log::trace!("current task is not ready, we are gonna switch to idle task");
 
-            let prev_ctx = ctx.current_task.as_ref() as *const Task;
+            let prev_ctx = ctx.current_task.as_ref() as *const Task as *mut Task;
             ctx.current_task = Arc::clone(&ctx.idle_task);
             ctx.idle_task.state.set(TaskState::Running);
             log::trace!("idle task is set to running");
