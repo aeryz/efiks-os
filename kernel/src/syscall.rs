@@ -5,8 +5,7 @@ use crate::{
     arch::{Architecture, TrapFrame, TrapFrameOf},
     error::Error,
     mm::{UserBuf, UserBufMut, UserPtr, VirtAddr},
-    percpu, sched,
-    task::{self, Task},
+    sched, task,
 };
 use efiks_types::Errno;
 

@@ -161,11 +161,7 @@ pub trait MemoryModel {
 }
 
 pub trait TrapFrame {
-    fn initialize(
-        instruction_ptr: VirtAddr,
-        stack_ptr: VirtAddr,
-        thread_info_ptr: VirtAddr,
-    ) -> Self;
+    fn initialize(instruction_ptr: VirtAddr, stack_ptr: VirtAddr, user_tp: VirtAddr) -> Self;
 
     fn get_syscall(&self) -> usize;
 

@@ -85,7 +85,6 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     let mut mm_ = MemoryManager::new_user();
 
     let entry_va = exec::elf::load_executable(path, &mut mm_)?;
-    log::info!("asdasd1");
 
     let user_sp = mm_.create_user_stack()?;
     let user_sp = create_initial_stack(&mm_, user_sp, argv)?;
@@ -94,7 +93,6 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
 
     let trap_frame = KernelPtr::new(VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>()))?;
 
-    log::info!("asdasd");
     unsafe {
         *(trap_frame.as_ptr_mut()) =
             TrapFrameOf::<Arch>::initialize(entry_va, user_sp, VirtAddr::new(0xcafebabe));
@@ -104,7 +102,6 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     let context = ContextOf::<Arch>::initialize(Arch::trap_resume_ptr().into(), kernel_sp);
 
     let pid = Pid::create_next();
-    log::info!("asdasd2");
 
     let parent = parent.map(|p| {
         p.runtime.lock().children.push(pid);

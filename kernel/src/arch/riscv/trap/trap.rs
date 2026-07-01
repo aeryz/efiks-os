@@ -5,17 +5,6 @@ unsafe extern "C" {
     pub fn trap_resume();
 }
 
-/*
-User-task entered trap:
-- tp contains ThreadInfo
-- sscratch contains 0
-
-
-save_trapframe:
-..
-
-*/
-
 core::arch::global_asm!(
 r#"
     .section .text.trap
@@ -30,14 +19,13 @@ trap_entry:
     // On kernel threads, sscratch is 0, so we just load it back in
     bnez tp, save_user_stack
     csrr tp, sscratch
-    j save_trapframe
+    j save_kernel_stack
 
 // On user threads, user sp needs to be stored and kernel sp needs to be loaded
 save_user_stack:
     sd sp, 0*8(tp)
     ld sp, 1*8(tp)
 
-save_trapframe:
     // Allocate the stack pointer to fit the trapframe
     addi sp, sp, -{TRAPFRAME_SIZE}
 
@@ -45,14 +33,26 @@ save_trapframe:
     // Otherwise, there is no guarantee that our registers will not be
     // altered with. (had a painful experience with this)
 
+    sd ra,  0*8(sp)
+    ld ra, 0*8(tp)
+    sd ra,  1*8(sp)
+    j save_trapframe
+
+save_kernel_stack:
+    // Allocate the stack pointer to fit the trapframe
+    addi sp, sp, -{TRAPFRAME_SIZE}
+    sd ra,  0*8(sp)
+    addi ra, sp, {TRAPFRAME_SIZE}
+    sd ra,  1*8(sp)
+
+save_trapframe:
     // read the user tp
     csrr ra, sscratch
     sd ra,  3*8(sp)
     // then restore the ra
     ld ra,  0*8(sp)
-    sd ra,  0*8(sp)
+    csrw sscratch, zero
     sd gp,  2*8(sp)
-    // sd tp,  3*8(sp)
     sd t0,  4*8(sp)
     sd t1,  5*8(sp)
     sd t2,  6*8(sp)
@@ -103,7 +103,6 @@ trap_resume:
 
     ld ra,  0*8(sp)
     ld gp,  2*8(sp)
-    // ld tp,  3*8(sp)
     // t0 and t1 are restored at the end because trap return needs scratch
     // registers to decide whether this was a user or kernel trap.
     ld t2,  6*8(sp)
@@ -146,7 +145,7 @@ ret_userspace:
     csrw sscratch, tp
     ld t0, -{SAVED_T0_FROM_TOP}(sp)
     ld t1, -{SAVED_T1_FROM_TOP}(sp)
-    ld tp,  3*8(sp)
+    ld tp, -{SAVED_TP_FROM_TOP}(sp)
     ld sp, -{SAVED_SP_FROM_TOP}(sp)
     sret
 
@@ -154,11 +153,12 @@ ret_kernel:
     csrw sscratch, zero
     ld t0, -{SAVED_T0_FROM_TOP}(sp)
     ld t1, -{SAVED_T1_FROM_TOP}(sp)
-    ld sp, 1*8(tp)
+    ld sp, -{SAVED_SP_FROM_TOP}(sp)
     sret
         "#,
 TRAPFRAME_SIZE = const size_of::<TrapFrame>(),
 SAVED_SP_FROM_TOP = const (size_of::<TrapFrame>() - 1 * 8),
+SAVED_TP_FROM_TOP = const (size_of::<TrapFrame>() - 3 * 8),
 SAVED_T0_FROM_TOP = const (size_of::<TrapFrame>() - 4 * 8),
 SAVED_T1_FROM_TOP = const (size_of::<TrapFrame>() - 5 * 8),
 SAVED_SSTATUS_FROM_TOP = const (size_of::<TrapFrame>() - 33 * 8),
