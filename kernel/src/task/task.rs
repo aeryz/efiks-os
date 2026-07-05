@@ -198,6 +198,7 @@ fn reap_zombie_child(task: &Arc<Task>) -> bool {
     let child_pid = task.runtime.lock().children.remove(child_idx);
     if let Some(child) = task::get_task(child_pid) {
         child.state.set(TaskState::Exited);
+        sched::enqueue_for_reaper(child);
     }
 
     true
