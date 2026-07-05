@@ -23,7 +23,7 @@ mod syscall;
 mod task;
 mod vfs;
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{collections::vec_deque::VecDeque, sync::Arc, vec::Vec};
 pub use debug::*;
 use ksync::SpinLock;
 
@@ -80,11 +80,19 @@ fn setup_core(core_id: usize, core_ctxs: &mut Vec<percpu::PerCoreContext>) {
     let idle_task =
         task::create_kernel_task(VirtAddr::new(idle_task_main as *const () as usize)).unwrap();
 
+    let reaper_task =
+        task::create_kernel_task(VirtAddr::new(sched::reaper_task_main as *const () as usize))
+            .unwrap();
+
     core_ctxs.push(percpu::PerCoreContext {
         core_id,
         scheduler: SpinLock::new(sched::init_per_core_scheduler()),
         current_task: Arc::clone(&idle_task),
         idle_task,
+        reaper_task: percpu::ReaperTaskCtx {
+            task: reaper_task,
+            cleanup_queue: SpinLock::new(VecDeque::new()),
+        },
     });
 }
 
