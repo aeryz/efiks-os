@@ -1,6 +1,6 @@
 use core::cell::OnceCell;
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{collections::vec_deque::VecDeque, sync::Arc, vec::Vec};
 use ksync::SpinLock;
 
 use crate::{sched::PerCoreScheduler, task::Task};
@@ -13,7 +13,13 @@ pub struct PerCoreContext {
     pub scheduler: SpinLock<PerCoreScheduler>,
     pub current_task: Arc<Task>,
     pub idle_task: Arc<Task>,
-    // pub reaper_task: NonNull<Task>,
+    pub reaper_task: ReaperTaskCtx,
+}
+
+#[repr(C)]
+pub struct ReaperTaskCtx {
+    pub task: Arc<Task>,
+    pub cleanup_queue: SpinLock<VecDeque<Arc<Task>>>,
 }
 
 // TODO(aeryz): Storing pointers (that can possibly be *mut) in the
