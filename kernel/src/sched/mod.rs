@@ -1,8 +1,9 @@
 mod sched;
 
+use alloc::sync::Arc;
 pub use sched::*;
 
-use crate::task;
+use crate::task::{self, Task};
 
 #[inline(never)]
 pub fn reaper_task_main() -> ! {
@@ -16,4 +17,12 @@ pub fn reaper_task_main() -> ! {
             task::cleanup(t);
         }
     }
+}
+
+pub fn enqueue_for_reaper(task: Arc<Task>) {
+    load_core_ctx_mut()
+        .reaper_task
+        .cleanup_queue
+        .lock()
+        .push_back(task);
 }
