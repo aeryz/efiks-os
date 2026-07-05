@@ -46,9 +46,11 @@ pub struct PerCoreScheduler {
     last_entrance_time: usize,
 }
 
-pub fn init_per_core_scheduler() -> PerCoreScheduler {
+pub fn init_per_core_scheduler(reaper_task: Arc<Task>) -> PerCoreScheduler {
+    let mut runqueue = VecDeque::new();
+    runqueue.push_back(reaper_task);
     PerCoreScheduler {
-        runqueue: VecDeque::new(),
+        runqueue,
         sleeping_tasks: Vec::new(),
         last_entrance_time: 0,
     }
@@ -95,11 +97,16 @@ pub fn schedule() {
             let prev_ctx = ctx.current_task.as_ref() as *const Task as *mut Task;
             ctx.current_task = new_task;
 
-            Arch::switch_to_user(
-                prev_ctx,
-                ctx.current_task.as_ref() as *const Task,
-                ctx.current_task.mm.root_pt.into(),
-            );
+            if ctx.current_task.is_kernel_task() {
+                Arch::set_kernel_sp(None);
+                Arch::switch_to(prev_ctx, ctx.current_task.as_ref() as *const Task);
+            } else {
+                Arch::switch_to_user(
+                    prev_ctx,
+                    ctx.current_task.as_ref() as *const Task,
+                    ctx.current_task.mm.root_pt.into(),
+                );
+            }
         }
         None => {
             log::trace!("rq is empty, switching to the idle task");
@@ -280,6 +287,12 @@ pub fn on_task_exit(task: &Arc<Task>) {
         }
     };
 
+    load_core_ctx_mut()
+        .reaper_task
+        .cleanup_queue
+        .lock()
+        .push_back(Arc::clone(task));
+
     schedule();
 }
 
@@ -311,7 +324,7 @@ pub fn load_core_ctx<'a>() -> &'a percpu::PerCoreContext {
     }
 }
 
-fn load_core_ctx_mut<'a>() -> &'a mut percpu::PerCoreContext {
+pub(super) fn load_core_ctx_mut<'a>() -> &'a mut percpu::PerCoreContext {
     unsafe {
         let task = Arch::load_this_cpu_ctx::<Task>();
         (*(*task).thread_info.per_cpu_ctx.get()).as_mut().unwrap()

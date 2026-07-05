@@ -50,6 +50,12 @@ pub struct TaskRuntime {
     pub wake_up_at: usize,
 }
 
+impl Task {
+    pub fn is_kernel_task(&self) -> bool {
+        self.trap_frame.addr() == 0
+    }
+}
+
 pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
     let kernel_stack = VirtAddr::new(mm::phys_to_virt(mm::alloc_frame()?.raw()));
 
@@ -133,7 +139,6 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     Ok(pid)
 }
 
-// TODO(aeryz): no sync mechanism for tasks this is scary
 pub fn exit(task: &Arc<Task>, exit_code: i32) {
     if task.state == TaskState::Exited {
         return;
@@ -152,6 +157,14 @@ pub fn exit(task: &Arc<Task>, exit_code: i32) {
     // sure what's the best way to free the whole task yet.
 
     sched::on_task_exit(task);
+}
+
+/// Meant to run by the reaper task. It does all the followup cleanup.
+pub fn cleanup(task: Arc<Task>) {
+    task.state.set(TaskState::Exited);
+    task.mm.free();
+
+    let _ = task::remove_task(task.pid);
 }
 
 pub fn wait(task: &Arc<Task>) -> Result<(), error::Error> {

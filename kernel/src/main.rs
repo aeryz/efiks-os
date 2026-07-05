@@ -86,7 +86,7 @@ fn setup_core(core_id: usize, core_ctxs: &mut Vec<percpu::PerCoreContext>) {
 
     core_ctxs.push(percpu::PerCoreContext {
         core_id,
-        scheduler: SpinLock::new(sched::init_per_core_scheduler()),
+        scheduler: SpinLock::new(sched::init_per_core_scheduler(Arc::clone(&reaper_task))),
         current_task: Arc::clone(&idle_task),
         idle_task,
         reaper_task: percpu::ReaperTaskCtx {
@@ -104,6 +104,8 @@ extern "C" fn core_boot_entry(core: usize) -> ! {
     let core_ctx = percpu::get_core(core);
     unsafe {
         (*core_ctx.idle_task.thread_info.per_cpu_ctx.get()) =
+            core_ctx as *const _ as *mut PerCoreContext;
+        (*core_ctx.reaper_task.task.thread_info.per_cpu_ctx.get()) =
             core_ctx as *const _ as *mut PerCoreContext;
     }
     Arch::set_per_cpu_ctx_ptr(VirtAddr::new(

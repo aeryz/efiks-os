@@ -18,6 +18,8 @@ pub struct PerCoreContext {
 
 #[repr(C)]
 pub struct ReaperTaskCtx {
+    // TODO(aeryz): Do we even need this? The reaper task is already handling its own
+    // scheduling via sleeping in a wait-loop.
     pub task: Arc<Task>,
     pub cleanup_queue: SpinLock<VecDeque<Arc<Task>>>,
 }
@@ -48,15 +50,4 @@ pub fn get_core_count() -> usize {
 
 pub fn get_core<'a>(idx: usize) -> &'a PerCoreContext {
     &CORES.0.get().expect("already initialized")[idx]
-}
-
-impl core::fmt::Debug for PerCoreContext {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("PerCoreContext")
-            .field("core_id", &self.core_id)
-            .field("scheduler", &*self.scheduler.lock())
-            // .field("currently_running_task", &self.currently_running_task)
-            // .field("idle_task", &self.idle_task)
-            .finish()
-    }
 }
