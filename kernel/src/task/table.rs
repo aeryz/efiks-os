@@ -72,4 +72,15 @@ pub fn get_task(pid: Pid) -> Option<Arc<Task>> {
     Some(Arc::clone(pool.slabs[slab_idx].get(idx)?))
 }
 
+/// Removes a task from the task table. This might not invalidate any weak refs
+/// to the task if the task itself is still in the rq or somewhere else. But at
+/// least removes one owned reference.
+pub fn remove_task(pid: Pid) -> Option<Arc<Task>> {
+    let mut pool = TASK_POOL.0.write_lock();
+
+    let (slab_idx, idx) = pool.pid_to_idx.get(&pid)?.clone();
+
+    Some(pool.slabs[slab_idx].remove(idx))
+}
+
 unsafe impl Sync for TaskPool {}
