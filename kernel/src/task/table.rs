@@ -78,7 +78,7 @@ pub fn get_task(pid: Pid) -> Option<Arc<Task>> {
 pub fn remove_task(pid: Pid) -> Option<Arc<Task>> {
     let mut pool = TASK_POOL.0.write_lock();
 
-    let (slab_idx, idx) = pool.pid_to_idx.get(&pid)?.clone();
+    let (slab_idx, idx) = pool.pid_to_idx.remove(&pid)?;
 
     Some(pool.slabs[slab_idx].remove(idx))
 }
