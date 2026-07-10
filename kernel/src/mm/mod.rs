@@ -21,6 +21,7 @@ use crate::{
 };
 
 pub const PAGE_SIZE: usize = 4096;
+const KERNEL_STACK_PAGES: usize = 16;
 
 #[allow(unused)]
 #[derive(Clone)]
@@ -116,10 +117,13 @@ impl MemoryManager {
     }
 
     pub fn create_kernel_stack(&self) -> Result<PhysAddr, Error> {
+        // Keep one allocated frame below the stack. With the current direct-map
+        // setup this is not an unmapped guard page, but it prevents a shallow
+        // kernel stack underflow from corrupting the task's root page table.
+        let _guard = alloc_frame().unwrap();
         let mut kernel_stack_top = PhysAddr::ZERO;
-        // 32KB kernel stack
-        for _ in 0..8 {
-            // TODO(aeryz): With the following logic, we cannot guarantee a 16KB contiguous
+        for _ in 0..KERNEL_STACK_PAGES {
+            // TODO(aeryz): With the following logic, we cannot guarantee a contiguous
             // virtual memory. This is not acceptable.
             let kernel_stack = alloc_frame().unwrap();
             let kernel_stack_va = VirtAddr::new(phys_to_virt(kernel_stack.raw()));
