@@ -65,12 +65,8 @@ impl Architecture for Riscv {
         plic::plic_init_uart(core_id);
     }
 
-    fn switch_to(from: *mut Task, to: *const Task) {
-        unsafe { context::swtch(from, to) };
-    }
-
-    fn switch_to_user(from: *mut Task, to: *const Task, root_pt: PhysicalAddressOf<Self>) {
-        unsafe { context::swtch_to_user(from, to, mmu::pa_to_satp(root_pt)) };
+    fn switch_to(from: *mut Task, to: *const Task, root_pt: PhysicalAddressOf<Self>) {
+        unsafe { context::swtch(from, to, mmu::pa_to_satp(root_pt)) };
     }
 
     fn set_per_cpu_ctx_ptr(ptr: VirtAddr) {

@@ -41,9 +41,7 @@ pub trait Architecture {
     // TODO(aeryz): We probably don't want this like this but for now, we have this
     fn init_uart(core_id: usize);
 
-    fn switch_to(from: *mut Task, to: *const Task);
-
-    fn switch_to_user(from: *mut Task, to: *const Task, root_pt: PhysicalAddressOf<Self>);
+    fn switch_to(from: *mut Task, to: *const Task, root_pt: PhysicalAddressOf<Self>);
 
     fn set_per_cpu_ctx_ptr(ptr: VirtAddr);
 

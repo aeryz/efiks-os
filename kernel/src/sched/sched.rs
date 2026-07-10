@@ -99,14 +99,12 @@ pub fn schedule() {
 
             if ctx.current_task.is_kernel_task() {
                 Arch::set_kernel_sp(None);
-                Arch::switch_to(prev_ctx, ctx.current_task.as_ref() as *const Task);
-            } else {
-                Arch::switch_to_user(
-                    prev_ctx,
-                    ctx.current_task.as_ref() as *const Task,
-                    ctx.current_task.mm.root_pt.into(),
-                );
             }
+            Arch::switch_to(
+                prev_ctx,
+                ctx.current_task.as_ref() as *const Task,
+                ctx.current_task.mm.root_pt.into(),
+            );
         }
         None => {
             log::trace!("rq is empty, switching to the idle task");
@@ -132,7 +130,11 @@ pub fn schedule() {
             sched.last_entrance_time = Arch::read_current_time();
             drop(sched);
             Arch::set_kernel_sp(None);
-            Arch::switch_to(prev_ctx, ctx.idle_task.as_ref() as *const Task);
+            Arch::switch_to(
+                prev_ctx,
+                ctx.idle_task.as_ref() as *const Task,
+                ctx.idle_task.mm.root_pt.into(),
+            );
         }
     }
 }
@@ -280,18 +282,21 @@ pub fn block_on_wait(task: &Arc<Task>, should_block: impl FnOnce() -> bool) -> b
 
 pub fn on_task_exit(task: &Arc<Task>) {
     let parent = task.runtime.lock().parent.map(|p| task::get_task(p));
-    if let Some(Some(parent)) = parent {
-        if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent.pid) {
-            parent.state.set(TaskState::Ready);
-            enqueue_new_task(&parent);
+    match parent {
+        Some(Some(parent)) => {
+            if SCHEDULER_CTX.lock().waiting_tasks.remove(&parent.pid) {
+                parent.state.set(TaskState::Ready);
+                enqueue_new_task(&parent);
+            }
         }
-    };
-
-    load_core_ctx_mut()
-        .reaper_task
-        .cleanup_queue
-        .lock()
-        .push_back(Arc::clone(task));
+        _ => {
+            load_core_ctx_mut()
+                .reaper_task
+                .cleanup_queue
+                .lock()
+                .push_back(Arc::clone(task));
+        }
+    }
 
     schedule();
 }
