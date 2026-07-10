@@ -22,6 +22,7 @@ use crate::{
 
 pub const PAGE_SIZE: usize = 4096;
 const KERNEL_STACK_PAGES: usize = 16;
+const KERNEL_STACK_RESERVED_BYTES: usize = 0x60;
 
 #[allow(unused)]
 #[derive(Clone)]
@@ -32,10 +33,26 @@ pub struct VmRegion {
     pub end: VirtAddr,
 }
 
+#[derive(Copy, Clone)]
+pub struct KernelStackRegion {
+    pub guard: PhysAddr,
+    pub start: VirtAddr,
+    pub end: VirtAddr,
+}
+
+impl KernelStackRegion {
+    pub const EMPTY: Self = Self {
+        guard: PhysAddr::ZERO,
+        start: VirtAddr::ZERO,
+        end: VirtAddr::ZERO,
+    };
+}
+
 pub struct MemoryManager {
     pub root_pt: PhysAddr,
     /// **Sorted** mapped regions
     pub regions: SpinLock<Vec<VmRegion>>,
+    pub kernel_stack: SpinLock<KernelStackRegion>,
     pub start_brk: VirtAddr,
     pub brk: SpinLock<VirtAddr>,
 }
@@ -48,6 +65,7 @@ impl MemoryManager {
     pub const EMPTY: Self = Self {
         root_pt: PhysAddr::ZERO,
         regions: SpinLock::new(Vec::new()),
+        kernel_stack: SpinLock::new(KernelStackRegion::EMPTY),
         start_brk: VirtAddr::ZERO,
         brk: SpinLock::new(VirtAddr::ZERO),
     };
@@ -120,25 +138,30 @@ impl MemoryManager {
         // Keep one allocated frame below the stack. With the current direct-map
         // setup this is not an unmapped guard page, but it prevents a shallow
         // kernel stack underflow from corrupting the task's root page table.
-        let _guard = alloc_frame().unwrap();
-        let mut kernel_stack_top = PhysAddr::ZERO;
-        for _ in 0..KERNEL_STACK_PAGES {
-            // TODO(aeryz): With the following logic, we cannot guarantee a contiguous
-            // virtual memory. This is not acceptable.
-            let kernel_stack = alloc_frame().unwrap();
-            let kernel_stack_va = VirtAddr::new(phys_to_virt(kernel_stack.raw()));
-            self.insert_mapping(
-                kernel_stack_va,
-                kernel_stack_va
-                    .offset_by(PAGE_SIZE as isize)
-                    .ok_or(Error::Overflow)?,
-            )?;
-
-            // We don't do mapping here because we already did `kvm_full_map` which maps the
-            // entire memory with 1GB pages
-
-            kernel_stack_top = kernel_stack.offset_by(0xfa0).unwrap();
+        let guard = alloc_frame().unwrap();
+        // TODO(aeryz): With the following logic, we cannot guarantee contiguous
+        // virtual memory. This is not acceptable.
+        let kernel_stack_start = alloc_frame().unwrap();
+        for _ in 1..KERNEL_STACK_PAGES {
+            let _ = alloc_frame().unwrap();
         }
+
+        // We don't do mapping here because we already did `kvm_full_map` which maps the
+        // entire memory with 1GB pages.
+        let stack_size = KERNEL_STACK_PAGES * PAGE_SIZE;
+        let stack_start_va = VirtAddr::new(phys_to_virt(kernel_stack_start.raw()));
+        let stack_end_va = stack_start_va
+            .offset_by(stack_size as isize)
+            .ok_or(Error::Overflow)?;
+        let kernel_stack_top = kernel_stack_start
+            .offset_by((stack_size - KERNEL_STACK_RESERVED_BYTES) as isize)
+            .unwrap();
+
+        *self.kernel_stack.lock() = KernelStackRegion {
+            guard,
+            start: stack_start_va,
+            end: stack_end_va,
+        };
 
         Ok(kernel_stack_top)
     }
@@ -222,13 +245,15 @@ impl MemoryManager {
         let regions = self.regions.lock();
         for r in regions.iter() {
             if r.start > KERNEL_DIRECT_MAPPING_BASE {
-                // Then this is a kernel mapping. We cannot free the kernel
-                // stack at this point since it is still in-use.
+                // Then this is a shared kernel mapping.
                 continue;
             }
             let pa = self.translate(r.start).unwrap();
             free_frame(pa);
         }
+        drop(regions);
+
+        self.free_kernel_stack();
 
         MemoryModelOf::<Arch>::traverse_free(self.root_pt.into());
     }
@@ -245,6 +270,22 @@ impl MemoryManager {
 
     fn root_pt_virt(&self) -> VirtAddr {
         VirtAddr::new(phys_to_virt(self.root_pt.raw()))
+    }
+
+    fn free_kernel_stack(&self) {
+        let stack = *self.kernel_stack.lock();
+        if stack.guard == PhysAddr::ZERO {
+            debug_assert_eq!(self.root_pt, PhysAddr::ZERO);
+            return;
+        }
+
+        free_frame(stack.guard);
+
+        let mut va = stack.start;
+        while va < stack.end {
+            free_frame(PhysAddr::new(virt_to_phys(va.raw())));
+            va = va.offset_by(PAGE_SIZE as isize).unwrap();
+        }
     }
 }
 
