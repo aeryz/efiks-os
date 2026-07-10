@@ -57,24 +57,22 @@ impl Task {
 }
 
 pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
-    let kernel_stack = VirtAddr::new(mm::phys_to_virt(mm::alloc_frame()?.raw()));
+    let mm_ = MemoryManager::new();
+    let kernel_sp = VirtAddr::new(mm::phys_to_virt(mm_.create_kernel_stack()?.raw()));
 
-    let context = ContextOf::<Arch>::initialize(
-        entry,
-        kernel_stack.offset_by(0xfa0).ok_or(Error::Overflow)?.into(),
-    );
+    let context = ContextOf::<Arch>::initialize(entry, kernel_sp);
 
     Ok(task::add_task(Task {
         thread_info: ThreadInfo {
             user_sp: 0,
-            kernel_sp: kernel_stack.raw(),
+            kernel_sp: kernel_sp.raw(),
             per_cpu_ctx: UnsafeCell::new(core::ptr::null_mut()),
         },
         pid: Pid::create_next(),
         trap_frame: KernelPtr::NULL,
         context,
         state: TaskState::Ready.into(),
-        mm: MemoryManager::EMPTY,
+        mm: mm_,
         file_table: SpinLock::new(FileTable::init()),
         runtime: SpinLock::new(TaskRuntime {
             parent: None,
@@ -88,7 +86,7 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
 // TODO(aeryz): I think we should use a CStr instead since argv here doesn't
 // tell you its supposed to be null-terminated right away.
 pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<Pid, Error> {
-    let mut mm_ = MemoryManager::new_user();
+    let mut mm_ = MemoryManager::new();
 
     let entry_va = exec::elf::load_executable(path, &mut mm_)?;
 

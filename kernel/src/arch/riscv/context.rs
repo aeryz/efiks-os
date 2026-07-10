@@ -6,21 +6,11 @@ use crate::{
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
-pub extern "C" fn swtch_to_user(from: *mut Task, to: *const Task, satp: usize) {
+pub extern "C" fn swtch(from: *mut Task, to: *const Task, satp: usize) {
     core::arch::naked_asm!(
         r#"
         csrw satp, a2
         sfence.vma zero, zero
-        j swtch
-        "#,
-    );
-}
-
-#[unsafe(naked)]
-#[unsafe(no_mangle)]
-pub extern "C" fn swtch(from: *mut Task, to: *const Task) {
-    core::arch::naked_asm!(
-        r#"
         addi a0, a0, {context_offset}
         sd ra,   0*8(a0)
         sd sp,   1*8(a0)

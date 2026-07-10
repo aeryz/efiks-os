@@ -51,8 +51,8 @@ impl MemoryManager {
         brk: SpinLock::new(VirtAddr::ZERO),
     };
 
-    /// Creates a new address space for the user tasks
-    pub fn new_user() -> Self {
+    /// Creates a new address space.
+    pub fn new() -> Self {
         let root_pt = alloc_frame().unwrap();
 
         let mut self_ = Self::EMPTY;
