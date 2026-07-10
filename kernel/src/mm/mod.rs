@@ -31,6 +31,9 @@ pub struct VmRegion {
     pub start: VirtAddr,
     /// End address of this region
     pub end: VirtAddr,
+    /// Permissions
+    // TODO(aeryz): pteflags here is again arch specific
+    pub flags: PteFlags,
 }
 
 #[derive(Copy, Clone)]
@@ -178,9 +181,37 @@ impl MemoryManager {
 
         MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), va.into(), pa.into(), flags);
 
-        self.insert_mapping(va, va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?)?;
+        self.insert_mapping(
+            va,
+            va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?,
+            flags,
+        )?;
 
         Ok(pa)
+    }
+
+    /// Handles a page fault at `addr`. Allocates if VM mapping exists,
+    /// otherwise returns error.
+    pub fn handle_page_fault(&self, addr: VirtAddr, access_flags: PteFlags) -> Result<(), Error> {
+        let addr = addr.align_down(PAGE_SIZE);
+        let regions = self.regions.lock();
+        let flags = match regions.binary_search_by_key(&addr, |r| r.start) {
+            Ok(i) => Ok(regions[i].flags),
+            Err(i) => (i > 0 && addr < regions[i - 1].end)
+                .then_some(regions[i - 1].flags)
+                .ok_or(Error::Unmapped),
+        }?;
+
+        if !flags.contains(access_flags) {
+            return Err(Error::Unmapped);
+        }
+
+        let pa = alloc_frame().unwrap();
+        zero_frame(pa);
+        MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), addr.into(), pa.into(), flags);
+        Arch::flush_tlb();
+
+        Ok(())
     }
 
     fn map_allocate_page_if_not_exist(
@@ -215,6 +246,7 @@ impl MemoryManager {
                     VmRegion {
                         start: addr,
                         end: addr.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?,
+                        flags,
                     },
                 );
 
@@ -224,11 +256,11 @@ impl MemoryManager {
     }
 
     /// Inserts a mapping in a sorted way
-    fn insert_mapping(&self, start: VirtAddr, end: VirtAddr) -> Result<(), Error> {
+    fn insert_mapping(&self, start: VirtAddr, end: VirtAddr, flags: PteFlags) -> Result<(), Error> {
         let mut regions = self.regions.lock();
         match regions.binary_search_by_key(&start, |va| va.start) {
             Ok(_) => panic!("Mapping an already existing entry again must be handled."),
-            Err(i) => regions.insert(i, VmRegion { start, end }),
+            Err(i) => regions.insert(i, VmRegion { start, end, flags }),
         }
 
         Ok(())
@@ -248,8 +280,10 @@ impl MemoryManager {
                 // Then this is a shared kernel mapping.
                 continue;
             }
-            let pa = self.translate(r.start).unwrap();
-            free_frame(pa);
+
+            if let Some(pa) = self.translate(r.start) {
+                free_frame(pa);
+            }
         }
         drop(regions);
 

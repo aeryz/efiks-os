@@ -1,9 +1,12 @@
 use crate::{
     arch::{
+        mmu::PteFlags,
         plic::{self, plic_claim, plic_complete},
         riscv::trap::trap_frame::{TrapCause, TrapFrame},
     },
-    driver, sched, syscall,
+    driver,
+    mm::VirtAddr,
+    sched, syscall, task,
 };
 
 #[unsafe(no_mangle)]
@@ -47,6 +50,24 @@ extern "C" fn trap_handler(trap_frame: &mut TrapFrame) {
             // `ecall`
             trap_frame.sepc += 4;
             syscall::dispatch_syscall(trap_frame);
+        }
+        TrapCause::LoadPageFault => {
+            let faulting_address = VirtAddr::new(riscv::registers::Stval::read().raw());
+
+            task::on_page_fault(
+                &sched::load_core_ctx().current_task,
+                faulting_address,
+                PteFlags::R,
+            );
+        }
+        TrapCause::StorePageFault => {
+            let faulting_address = VirtAddr::new(riscv::registers::Stval::read().raw());
+
+            task::on_page_fault(
+                &sched::load_core_ctx().current_task,
+                faulting_address,
+                PteFlags::W,
+            );
         }
         TrapCause::Unknown(trap) => {
             let fp = trap_frame.s0;

@@ -5,7 +5,7 @@ use ksync::SpinLock;
 
 use crate::{
     Arch,
-    arch::{Architecture, Context, ContextOf, TrapFrame, TrapFrameOf},
+    arch::{Architecture, Context, ContextOf, TrapFrame, TrapFrameOf, mmu::PteFlags},
     error::{self, Error},
     exec,
     mm::{self, KernelPtr, MemoryManager, PAGE_SIZE, VirtAddr},
@@ -180,6 +180,19 @@ pub fn wait(task: &Arc<Task>) -> Result<(), error::Error> {
     reap_zombie_child(task);
 
     Ok(())
+}
+
+pub fn on_page_fault(task: &Arc<Task>, faulting_address: VirtAddr, access_flags: PteFlags) {
+    if task
+        .mm
+        .handle_page_fault(faulting_address, access_flags)
+        .is_ok()
+    {
+        return;
+    }
+
+    // TODO(aeryz): we don't have a killing mechanism yet so we just exit lol
+    exit(task, -1);
 }
 
 fn reap_zombie_child(task: &Arc<Task>) -> bool {

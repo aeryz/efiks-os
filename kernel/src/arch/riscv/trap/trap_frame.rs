@@ -52,6 +52,8 @@ pub enum TrapCause {
     Syscall,
     TimerInterrupt,
     ExternalIrq,
+    LoadPageFault,
+    StorePageFault,
     Unknown(usize),
 }
 
@@ -59,6 +61,8 @@ impl From<usize> for TrapCause {
     fn from(value: usize) -> Self {
         match value {
             0x8 => TrapCause::Syscall,
+            0xD => TrapCause::LoadPageFault,
+            0xF => TrapCause::StorePageFault,
             0x8000000000000005 => TrapCause::TimerInterrupt,
             0x8000000000000009 => TrapCause::ExternalIrq,
             _ => TrapCause::Unknown(value),
