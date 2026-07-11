@@ -104,16 +104,10 @@ impl MemoryManager {
         } else if new_brk > *brk {
             let mut addr = brk.align_up(PAGE_SIZE);
             let new_mapped_end = new_brk.align_up(PAGE_SIZE);
-            let mut mapped_new_page = false;
 
             while addr < new_mapped_end {
-                mapped_new_page |=
-                    self.map_allocate_page_if_not_exist(addr, PteFlags::RW | PteFlags::U)?;
+                self.map_page_if_not_exist(addr, PteFlags::RW | PteFlags::U)?;
                 addr = addr.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?;
-            }
-
-            if mapped_new_page {
-                Arch::flush_tlb();
             }
 
             *brk = new_brk;
@@ -178,6 +172,7 @@ impl MemoryManager {
     /// regions.
     pub fn map_allocate_page(&self, va: VirtAddr, flags: PteFlags) -> Result<PhysAddr, Error> {
         let pa = alloc_frame().unwrap();
+        zero_frame(pa);
 
         MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), va.into(), pa.into(), flags);
 
@@ -188,6 +183,14 @@ impl MemoryManager {
         )?;
 
         Ok(pa)
+    }
+
+    pub fn map_page(&self, va: VirtAddr, flags: PteFlags) -> Result<(), Error> {
+        self.insert_mapping(
+            va,
+            va.offset_by(PAGE_SIZE as isize).ok_or(Error::Overflow)?,
+            flags,
+        )
     }
 
     /// Handles a page fault at `addr`. Allocates if VM mapping exists,
@@ -205,6 +208,11 @@ impl MemoryManager {
         if !flags.contains(access_flags) {
             return Err(Error::Unmapped);
         }
+        drop(regions);
+
+        if self.translate(addr).is_some() {
+            return Err(Error::Unmapped);
+        }
 
         let pa = alloc_frame().unwrap();
         zero_frame(pa);
@@ -214,11 +222,7 @@ impl MemoryManager {
         Ok(())
     }
 
-    fn map_allocate_page_if_not_exist(
-        &self,
-        addr: VirtAddr,
-        flags: PteFlags,
-    ) -> Result<bool, Error> {
+    fn map_page_if_not_exist(&self, addr: VirtAddr, flags: PteFlags) -> Result<bool, Error> {
         let mut regions = self.regions.lock();
         match regions.binary_search_by_key(&addr, |r| r.start) {
             // it could match exactly
@@ -231,15 +235,6 @@ impl MemoryManager {
                 if i > 0 && addr < regions[i - 1].end {
                     return Ok(false);
                 }
-
-                let pa = alloc_frame().unwrap();
-                zero_frame(pa);
-                MemoryModelOf::<Arch>::map_vm(
-                    self.root_pt_virt().into(),
-                    addr.into(),
-                    pa.into(),
-                    flags,
-                );
 
                 regions.insert(
                     i,
