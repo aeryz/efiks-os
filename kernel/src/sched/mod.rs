@@ -10,13 +10,7 @@ pub fn reaper_task_main() -> ! {
     loop {
         log::info!("checking for tasks to cleanup..");
 
-        while let Some(t) = {
-            load_core_ctx()
-                .reaper_task
-                .cleanup_queue
-                .lock()
-                .pop_front()
-        } {
+        while let Some(t) = { load_core_ctx().reaper_task.cleanup_queue.lock().pop_front() } {
             log::info!("cleaning up: {:?}", t.pid);
             task::cleanup(t);
         }

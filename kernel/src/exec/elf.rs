@@ -18,7 +18,7 @@ use crate::{
     arch::mmu::PteFlags,
     error,
     helper::align_down,
-    mm::{self, KernelPtr, MemoryManager, PAGE_SIZE, VirtAddr},
+    mm::{self, MemoryManager, PAGE_SIZE, VirtAddr},
 };
 
 #[derive(Debug)]
@@ -90,14 +90,7 @@ pub fn load_executable(path: &[u8], mm_: &mut MemoryManager) -> Result<VirtAddr,
             let va = aligned_vaddr;
             match mapped_pages.entry(aligned_vaddr) {
                 Entry::Vacant(e) => {
-                    let pa = mm_.map_allocate_page(aligned_vaddr, flags)?;
-
-                    let kernel_vaddr =
-                        KernelPtr::<u8>::new(VirtAddr::new(mm::phys_to_virt(pa.raw())))?;
-
-                    unsafe {
-                        ptr::write_bytes(kernel_vaddr.as_ptr_mut(), 0, PAGE_SIZE);
-                    }
+                    mm_.map_allocate_page(aligned_vaddr, flags)?;
                     e.insert(flags);
                 }
                 Entry::Occupied(mut e) => {
