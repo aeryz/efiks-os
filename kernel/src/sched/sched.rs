@@ -224,18 +224,14 @@ pub fn on_timer_interrupt() {
         Arch::set_timer(current_time + Arch::nanos_to_ticks(8 * 1_000_000));
     };
 
+    set_timer();
+
     if (ctx.current_task.pid != ctx.idle_task.pid
         && current_time - last_entrance > Arch::nanos_to_ticks(32 * 1_000_000))
         || some_task_woke_up
         || (ctx.current_task.pid == ctx.idle_task.pid && !ctx.scheduler.lock().runqueue.is_empty())
     {
-        set_timer();
         schedule();
-    } else if some_task_woke_up {
-        set_timer();
-        schedule();
-    } else {
-        set_timer();
     }
 }
 
