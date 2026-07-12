@@ -9,6 +9,8 @@ pub enum Errno {
     EIO = 5,
     /// Exec format error
     ENoExec = 8,
+    /// No child processes
+    EChild = 10,
     /// Cannot allocate memory
     ENoMem = 12,
     /// Bad address
@@ -25,4 +27,10 @@ pub enum Errno {
 
 pub trait IntoError: core::fmt::Debug {
     fn to_errno(&self) -> Errno;
+}
+
+impl IntoError for Errno {
+    fn to_errno(&self) -> Errno {
+        *self
+    }
 }

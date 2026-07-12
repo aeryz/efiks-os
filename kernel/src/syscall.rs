@@ -5,7 +5,8 @@ use crate::{
     arch::{Architecture, TrapFrame, TrapFrameOf},
     error::Error,
     mm::{UserBuf, UserBufMut, UserPtr, VirtAddr},
-    sched, task,
+    sched,
+    task::{self, RawWaitStatus},
 };
 use efiks_types::Errno;
 
@@ -57,11 +58,14 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             do_syscall_spawn(path, argv, out_pid).map(|_| 0)
         }
         SYS_EXIT => {
-            let exit_code = tf.get_arg::<0>() as i32;
+            let exit_code = tf.get_arg::<0>() as i8;
             do_syscall_exit(exit_code);
             Ok(0)
         }
-        SYS_WAIT => do_syscall_wait().map(|n| n as isize),
+        SYS_WAIT => {
+            let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<0>());
+            do_syscall_wait(out_wstatus).map(|p| p.raw() as isize)
+        }
         // TODO(aeryz): Shouldn't this supposed to be `Brk`?
         SYS_BRK => {
             let brk = tf.get_arg::<0>() as usize;
@@ -145,15 +149,22 @@ fn do_syscall_sleep_ms(time_ms: usize) {
     sched::sleep_current_task(time_ms);
 }
 
-fn do_syscall_exit(exit_code: i32) {
+fn do_syscall_exit(exit_code: i8) {
     let task = &sched::load_core_ctx().current_task;
     task::exit(task, exit_code);
 }
 
-fn do_syscall_wait() -> Result<i32, Error> {
+fn do_syscall_wait(out_wstatus: UserPtr<RawWaitStatus>) -> Result<task::Pid, Error> {
     let task = &sched::load_core_ctx().current_task;
     // TODO(aeryz): we should get the exit code of the child?
-    task::wait(task).map(|_| 0)
+    let (pid, exit_code) = task::wait(task)?;
+
+    let raw_stat: RawWaitStatus = task::WaitStatus::Exited(exit_code).into();
+    unsafe {
+        out_wstatus.copy_into_user(&raw_stat);
+    }
+
+    Ok(pid)
 }
 
 fn do_syscall_brk(brk: usize) -> Result<usize, Error> {

@@ -1,6 +1,7 @@
 use core::cell::UnsafeCell;
 
 use alloc::{sync::Arc, vec::Vec};
+use efiks_types::Errno;
 use ksync::SpinLock;
 
 use crate::{
@@ -44,7 +45,7 @@ pub struct TaskRuntime {
     /// Children of this task
     pub children: Vec<Pid>,
     /// Process exit code
-    pub exit_code: i32,
+    pub exit_code: i8,
     // TODO(aeryz): this might go into sched state as well
     /// Wake up time in ticks
     pub wake_up_at: usize,
@@ -137,13 +138,13 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     Ok(pid)
 }
 
-pub fn exit(task: &Arc<Task>, exit_code: i32) {
+pub fn exit(task: &Arc<Task>, exit_code: i8) {
     if task.state == TaskState::Exited {
         return;
     }
 
-    task.state.set(TaskState::Zombie);
     task.runtime.lock().exit_code = exit_code;
+    task.state.set(TaskState::Zombie);
 
     task.file_table.lock().destroy();
     task.runtime.lock().children = Vec::new();
@@ -165,21 +166,29 @@ pub fn cleanup(task: Arc<Task>) {
     let _ = task::remove_task(task.pid);
 }
 
-pub fn wait(task: &Arc<Task>) -> Result<(), error::Error> {
+pub fn wait(task: &Arc<Task>) -> Result<(Pid, i8), error::Error> {
     if task.runtime.lock().children.is_empty() {
-        return Ok(());
+        return Err(Errno::EChild.into());
     }
 
     task.state.set(TaskState::Blocked);
 
-    if !sched::block_on_wait(task, || !reap_zombie_child(task)) {
+    let mut ret = None;
+    let blocked = sched::block_on_wait(task, || {
+        ret = reap_zombie_child(task);
+        ret.is_none()
+    });
+
+    if blocked {
+        ret = reap_zombie_child(task);
+    } else {
         task.state.set(TaskState::Running);
-        return Ok(());
     }
 
-    reap_zombie_child(task);
+    let ret = ret
+        .expect("the parent process should not be scheduled until a child exits");
 
-    Ok(())
+    Ok(ret)
 }
 
 pub fn on_page_fault(task: &Arc<Task>, faulting_address: VirtAddr, access_flags: PteFlags) {
@@ -195,7 +204,7 @@ pub fn on_page_fault(task: &Arc<Task>, faulting_address: VirtAddr, access_flags:
     exit(task, -1);
 }
 
-fn reap_zombie_child(task: &Arc<Task>) -> bool {
+fn reap_zombie_child(task: &Arc<Task>) -> Option<(Pid, i8)> {
     let Some(child_idx) = task.runtime.lock().children.iter().position(|pid| {
         let Some(child) = task::get_task(*pid) else {
             return false;
@@ -203,16 +212,18 @@ fn reap_zombie_child(task: &Arc<Task>) -> bool {
 
         child.state == TaskState::Zombie
     }) else {
-        return false;
+        return None;
     };
 
     let child_pid = task.runtime.lock().children.remove(child_idx);
-    if let Some(child) = task::get_task(child_pid) {
-        child.state.set(TaskState::Exited);
-        sched::enqueue_for_reaper(child);
-    }
+    let child = task::get_task(child_pid)?;
+    child.state.set(TaskState::Exited);
 
-    true
+    let pid = child.pid;
+    let exit_code = child.runtime.lock().exit_code;
+    sched::enqueue_for_reaper(child);
+
+    Some((pid, exit_code))
 }
 
 /// Creates an initial stack for the tasks that contains the following
