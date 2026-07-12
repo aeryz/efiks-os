@@ -69,7 +69,19 @@ pub fn schedule() {
 
     let mut sched = ctx.scheduler.lock();
     log::trace!("sched queue len: {}", sched.runqueue.len());
-    match sched.runqueue.pop_front() {
+    let next_task = loop {
+        let Some(task) = sched.runqueue.pop_front() else {
+            break None;
+        };
+
+        if task.state == TaskState::Ready {
+            break Some(task);
+        }
+
+        log::trace!("discarding stale runqueue entry for {:?}", task.pid);
+    };
+
+    match next_task {
         Some(new_task) => {
             log::trace!("rq is not empty, switching to the next task");
 
