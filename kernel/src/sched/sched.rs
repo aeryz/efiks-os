@@ -5,7 +5,6 @@ use alloc::{
         vec_deque::VecDeque,
     },
     sync::{Arc, Weak},
-    vec::Vec,
 };
 use ksync::SpinLock;
 
@@ -13,6 +12,7 @@ use crate::{
     Arch,
     arch::Architecture,
     percpu::{self, PerCoreContext},
+    sched::sleeping_tasks::SleepingTasks,
     task::{self, Pid, Task, TaskState},
 };
 
@@ -41,7 +41,7 @@ pub struct PerCoreScheduler {
     runqueue: VecDeque<Arc<Task>>,
     /// The list of sleeping tasks that start sleeping when it was running on
     /// this core
-    sleeping_tasks: Vec<Weak<Task>>,
+    sleeping_tasks: SleepingTasks,
     /// The time when the currently running process started running.
     last_entrance_time: usize,
 }
@@ -51,7 +51,7 @@ pub fn init_per_core_scheduler(reaper_task: Arc<Task>) -> PerCoreScheduler {
     runqueue.push_back(reaper_task);
     PerCoreScheduler {
         runqueue,
-        sleeping_tasks: Vec::new(),
+        sleeping_tasks: SleepingTasks::new(),
         last_entrance_time: 0,
     }
 }
@@ -190,33 +190,17 @@ pub fn on_timer_interrupt() {
         let mut scheduler = ctx.scheduler.lock();
         last_entrance = scheduler.last_entrance_time;
 
-        let mut i = 0;
-        // TODO(aeryz): This is not nice, we are removing items at arbitrary indices in
-        // a very hot path
-        while i < scheduler.sleeping_tasks.len() {
-            match scheduler.sleeping_tasks[i].upgrade() {
-                Some(task) => {
-                    let wake_up_at = task.runtime.lock().wake_up_at;
-                    if current_time >= wake_up_at {
-                        log::trace!(
-                            "task should wake up at: {} and the cur is {current_time}, so we switch",
-                            wake_up_at
-                        );
-                        task.state.set(TaskState::Ready);
-                        some_task_woke_up = true;
-                        let _ = scheduler.sleeping_tasks.remove(i);
-                        scheduler.runqueue.push_back(task);
-                    } else {
-                        i += 1;
-                        continue;
-                    }
-                }
-                None => {
-                    core::hint::cold_path();
-                    let _ = scheduler.sleeping_tasks.remove(i);
-                }
-            }
-        }
+        let PerCoreScheduler {
+            runqueue,
+            sleeping_tasks,
+            ..
+        } = &mut *scheduler;
+
+        sleeping_tasks.with_tasks_to_wake_up(current_time, |task| {
+            task.state.set(TaskState::Ready);
+            some_task_woke_up = true;
+            runqueue.push_back(task);
+        });
     }
 
     let set_timer = || {
@@ -322,10 +306,7 @@ pub fn sleep_current_task(time_ms: usize) {
         ))
         .unwrap_or(0);
 
-    ctx.scheduler
-        .lock()
-        .sleeping_tasks
-        .push(Arc::downgrade(&ctx.current_task));
+    ctx.scheduler.lock().sleeping_tasks.push(&ctx.current_task);
 
     schedule();
 }

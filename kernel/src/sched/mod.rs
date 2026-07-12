@@ -1,4 +1,5 @@
 mod sched;
+mod sleeping_tasks;
 
 use alloc::sync::Arc;
 pub use sched::*;
