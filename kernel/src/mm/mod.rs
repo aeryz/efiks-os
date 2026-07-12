@@ -201,7 +201,7 @@ impl MemoryManager {
         let flags = match regions.binary_search_by_key(&addr, |r| r.start) {
             Ok(i) => Ok(regions[i].flags),
             Err(i) => (i > 0 && addr < regions[i - 1].end)
-                .then_some(regions[i - 1].flags)
+                .then(|| regions[i - 1].flags)
                 .ok_or(Error::Unmapped),
         }?;
 
