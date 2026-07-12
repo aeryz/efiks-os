@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const BrkAllocator = @import("brk_allocator.zig");
 
 const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait };
@@ -75,11 +77,34 @@ pub fn syscall_spawn(
     return @bitCast(ret);
 }
 
-pub fn syscall_wait() isize {
+pub const WaitResult = struct {
+    // TODO(aeryz): pid type
+    pid: isize,
+    term: std.process.Child.Term,
+};
+
+pub fn syscall_wait() WaitResult {
+    var wstatus: u16 = undefined;
     const ret = asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
         : [number] "{x17}" (Syscall.wait),
+          [wstatus] "{x10}" (@intFromPtr(&wstatus)),
         : .{ .memory = true });
 
-    return @bitCast(ret);
+    const pid: isize = @bitCast(ret);
+
+    return .{
+        .pid = pid,
+        .term = wstatus_to_term(wstatus),
+    };
+}
+
+fn wstatus_to_term(wstatus: ?u16) std.process.Child.Term {
+    if (wstatus) |status| {
+        if (status & 0xFF == 0) {
+            return .{ .exited = @intCast((status >> 8) & 0xFF) };
+        }
+    }
+
+    return .{ .unknown = 0 };
 }

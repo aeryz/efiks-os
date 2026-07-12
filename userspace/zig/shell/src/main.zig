@@ -79,8 +79,11 @@ fn main(_: usize, _: [*]const ?[*:0]const u8) i32 {
                 argv.ptr,
             );
             if (pid != 0) {
-                _ = efiks.syscall_wait();
-                _ = efiks.write("child finished execution.\n");
+                const res = efiks.syscall_wait();
+                var b: [128]u8 = undefined;
+
+                const str = std.fmt.bufPrint(&b, "child finished {} finished execution with code {}\n", .{ res.pid, res.term.exited }) catch unreachable;
+                _ = efiks.write(@constCast(str));
             }
         } else if (std.mem.eql(u8, cmd, "exit")) {
             _ = efiks.syscall_exit(0);
