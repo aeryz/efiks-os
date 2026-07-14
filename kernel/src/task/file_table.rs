@@ -17,6 +17,11 @@ impl FileTable {
         ])
     }
 
+    pub fn add_file(&mut self, file: File) -> usize {
+        self.0.push(Some(FileRef::new(file)));
+        self.0.len() - 1
+    }
+
     pub fn get_file(&self, fd: usize) -> Option<FileRef> {
         self.0.get(fd)?.clone()
     }

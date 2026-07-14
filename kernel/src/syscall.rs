@@ -17,6 +17,7 @@ pub(crate) const SYS_SHUTDOWN: usize = 4;
 pub(crate) const SYS_EXIT: usize = 5;
 pub(crate) const SYS_SPAWN: usize = 6;
 pub(crate) const SYS_WAIT: usize = 7;
+pub(crate) const SYS_OPEN: usize = 8;
 // Match the linux kernel for Zig's `BrkAllocator` compatibility.
 pub(crate) const SYS_BRK: usize = 214;
 
@@ -70,6 +71,11 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
         SYS_BRK => {
             let brk = tf.get_arg::<0>() as usize;
             do_syscall_brk(brk).map(|n| n as isize)
+        }
+        SYS_OPEN => {
+            let path = UserBuf::new(tf.get_arg::<0>()).ok_or(Error::InvalidArgs)?;
+            let flags = tf.get_arg::<1>() as u32;
+            syscall_open::do_syscall_open(path, flags).map(|fd| fd as isize)
         }
         _ => Err(Error::NoSys),
     }
@@ -219,4 +225,81 @@ fn do_syscall_spawn(
     }
 
     Ok(())
+}
+
+mod syscall_open {
+    use bitflags::bitflags;
+
+    use super::*;
+
+    bitflags! {
+        #[repr(transparent)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct Flags: u32 {
+            const RDONLY    = 0o0000000;
+            const WRONLY    = 0o0000001;
+            const RDWR      = 0o0000002;
+            const ACCMODE   = 0o0000003;
+
+            const CREAT     = 0o0000100;
+            const EXCL      = 0o0000200;
+            const NOCTTY    = 0o0000400;
+            const TRUNC     = 0o0001000;
+            const APPEND    = 0o0002000;
+            const NONBLOCK  = 0o0004000;
+            const DSYNC     = 0o0010000;
+            const ASYNC     = 0o0020000;
+            const DIRECT    = 0o0040000;
+            const LARGEFILE = 0o0100000;
+            const DIRECTORY = 0o0200000;
+            const NOFOLLOW  = 0o0400000;
+            const NOATIME   = 0o1000000;
+            const CLOEXEC   = 0o2000000;
+
+            // Linux defines O_SYNC = __O_SYNC | O_DSYNC.
+            const SYNC      = 0o4010000;
+
+            const PATH      = 0o10000000;
+            const TMPFILE   = 0o20200000;
+        }
+    }
+
+    pub(super) fn do_syscall_open(path: UserBuf, flags: u32) -> Result<usize, Error> {
+        let flags = Flags::from_bits(flags).ok_or(Error::InvalidArgs)?;
+
+        let mut kpath = [0; vfs::MAX_FILE_PATH_LENGTH];
+        let n_path = unsafe {
+            path.copy_from_user_until(&mut kpath, |b| b == 0)
+                .ok_or(Error::InvalidArgs)?
+        };
+
+        let kpath = &kpath[0..n_path];
+        if kpath.is_empty() {
+            return Err(Error::InvalidArgs);
+        }
+
+        let add_file = |file: vfs::File| -> usize {
+            let ctx = sched::load_core_ctx();
+            ctx.current_task.file_table.lock().add_file(file)
+        };
+
+        match crate::vfs::open(kpath) {
+            Ok(file) => {
+                if flags.contains(Flags::CREAT | Flags::EXCL) {
+                    return Err(Error::Errno(Errno::EExist));
+                }
+
+                Ok(add_file(file))
+            }
+            Err(err) if err == vfs::VfsError::NotFound => {
+                if !flags.contains(Flags::CREAT) {
+                    return Err(err.into());
+                }
+
+                let file = crate::vfs::create(kpath)?;
+                Ok(add_file(file))
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
 }
