@@ -21,6 +21,10 @@ impl VNode for ConsoleVNode {
         Err(vfs::VfsError::Fs)
     }
 
+    fn create(&self, _path: &[u8]) -> vfs::VfsResult<vfs::File> {
+        Err(vfs::VfsError::Fs)
+    }
+
     fn read(&self, _offset: usize, buf: &mut [u8]) -> vfs::VfsResult<usize> {
         let mut i = 0;
         while i < buf.len() {

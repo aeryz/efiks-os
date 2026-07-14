@@ -14,7 +14,7 @@
 
 #![no_std]
 
-use core::{marker::PhantomData, ptr};
+use core::{marker::PhantomData, ptr, slice};
 
 use alloc::{
     collections::btree_map::{BTreeMap, Entry},
@@ -27,7 +27,6 @@ use vfs::{BlockDevice, File, Filesystem, SECTOR_SIZE, VNode, VfsError, VfsResult
 extern crate alloc;
 
 const MAGIC: u32 = 0x5653_4653; // "VSFS"
-const MAX_DIRENTS_IN_SECTOR: usize = 512 / size_of::<DirEnt>();
 const BLOCK_SIZE: usize = 4096;
 const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
 
@@ -129,46 +128,52 @@ impl<BD: BlockDevice> INode<BD> {
         inode: ReadLockGuard<'_, INodeInner>,
         path: &[u8],
     ) -> VfsResult<Arc<Self>> {
+        Self::lookup_path_inner(fs, &inode, path)
+    }
+
+    fn lookup_path_inner(
+        fs: &Arc<Vsfs<BD>>,
+        inode: &INodeInner,
+        path: &[u8],
+    ) -> VfsResult<Arc<Self>> {
         if inode.ty != Type::Directory {
             return Err(VfsError::Fs);
         }
 
-        let n_dirent_in_node = inode.metadata.sz as usize / size_of::<DirEnt>();
-
+        if inode.metadata.sz as usize % size_of::<DirEnt>() != 0 {
+            return Err(VfsError::Fs);
+        }
         let buf = &mut [0; 512];
-        for (block_idx, block) in inode.direct_blocks.iter().enumerate() {
-            let mut sector = block * 4096 / 512;
+        for dirent_idx in 0..inode.metadata.sz as usize / size_of::<DirEnt>() {
+            let dirent_offset = dirent_idx * size_of::<DirEnt>();
+            let block_idx = dirent_offset / BLOCK_SIZE;
+            let block_offset = dirent_offset % BLOCK_SIZE;
+            if block_idx >= inode.direct_blocks.len() {
+                return Err(VfsError::Fs);
+            }
 
-            for sector_idx in 0..8 {
-                BD::read_sector(sector as usize, buf)?;
+            let block = inode.direct_blocks[block_idx];
+            if block == 0 {
+                return Err(VfsError::Fs);
+            }
 
-                for cur_dir_idx in 0..MAX_DIRENTS_IN_SECTOR {
-                    if (block_idx * 8 + sector_idx) * MAX_DIRENTS_IN_SECTOR + cur_dir_idx
-                        >= n_dirent_in_node
-                    {
-                        return Err(VfsError::Fs);
-                    }
+            let sector = block as usize * SECTORS_PER_BLOCK + block_offset / SECTOR_SIZE;
+            BD::read_sector(sector, buf)?;
 
-                    let dirent = unsafe {
-                        ptr::read_unaligned(
-                            buf[(size_of::<DirEnt>() * cur_dir_idx)..].as_ptr() as *const DirEnt
-                        )
-                    };
-                    let name_len = dirent.name_len as usize;
-                    if name_len > dirent.name.len() {
-                        return Err(VfsError::Fs);
-                    }
+            let dirent = unsafe {
+                ptr::read_unaligned(buf[block_offset % SECTOR_SIZE..].as_ptr() as *const DirEnt)
+            };
+            let name_len = dirent.name_len as usize;
+            if name_len > dirent.name.len() {
+                return Err(VfsError::Fs);
+            }
 
-                    if &dirent.name[0..name_len] == path {
-                        return Ok(Vsfs::<BD>::read_inode(fs.clone(), dirent.inum as usize)?);
-                    }
-                }
-
-                sector += 1;
+            if &dirent.name[0..name_len] == path {
+                return Ok(Vsfs::<BD>::read_inode(fs.clone(), dirent.inum as usize)?);
             }
         }
 
-        Err(VfsError::Fs)
+        Err(VfsError::NotFound)
     }
 }
 
@@ -195,6 +200,49 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
             inode: current,
             offset: 0,
         })
+    }
+
+    fn create(&self, path: &[u8]) -> VfsResult<File> {
+        let mut current = Arc::new(self.clone());
+        let mut err: Option<VfsError> = None;
+        let mut leaf = None;
+        let mut components = path
+            .split(|b| *b == b'/')
+            .filter(|p| !p.is_empty())
+            .peekable();
+        while let Some(path) = components.next() {
+            if let Some(err) = err {
+                return Err(err);
+            }
+
+            let is_leaf = components.peek().is_none();
+            let inode = current.inner.read_lock();
+            if inode.ty == Type::File {
+                return Err(VfsError::Fs);
+            }
+
+            match Self::lookup_path(&self.fs, inode, path) {
+                Ok(next_inode) => {
+                    if current.inum != next_inode.inum {
+                        current = next_inode;
+                    }
+                }
+                Err(e) => {
+                    if e == VfsError::NotFound && is_leaf {
+                        leaf = Some(path);
+                    }
+                    err = Some(e);
+                }
+            }
+        }
+
+        if let Some(VfsError::NotFound) = err {
+            let leaf = leaf.ok_or(VfsError::Fs)?;
+            let inode = self.fs.create_file(&current, leaf)?;
+            return Ok(File { inode, offset: 0 });
+        }
+
+        Err(VfsError::Fs)
     }
 
     /// Reads bytes from a regular file.
@@ -377,6 +425,170 @@ impl<BD: BlockDevice + 'static + Send + Sync> Filesystem for Vsfs<BD> {
 }
 
 impl<BD: BlockDevice> Vsfs<BD> {
+    fn create_file(&self, parent: &Arc<INode<BD>>, name: &[u8]) -> VfsResult<Arc<INode<BD>>> {
+        if name.is_empty() || name.len() > 27 {
+            return Err(VfsError::Fs);
+        }
+
+        let mut parent_inner = parent.inner.write_lock();
+        if parent_inner.ty != Type::Directory
+            || parent_inner.metadata.sz as usize % size_of::<DirEnt>() != 0
+        {
+            return Err(VfsError::Fs);
+        }
+        match INode::<BD>::lookup_path_inner(&parent.fs, &parent_inner, name) {
+            Ok(_) => return Err(VfsError::Fs),
+            Err(VfsError::NotFound) => {}
+            Err(err) => return Err(err),
+        }
+
+        let dirent_offset = parent_inner.metadata.sz as usize;
+        let block_idx = dirent_offset / BLOCK_SIZE;
+        let block_offset = dirent_offset % BLOCK_SIZE;
+        if block_idx >= parent_inner.direct_blocks.len() {
+            return Err(VfsError::Fs);
+        }
+
+        if parent_inner.direct_blocks[block_idx] == 0 {
+            parent_inner.direct_blocks[block_idx] = self.allocate_data_block()?;
+        }
+
+        let inum = self.allocate_inode()?;
+        let inode_inner = INodeInner {
+            ty: Type::File,
+            link_count: 1,
+            metadata: Metadata { dev: 0, sz: 0 },
+            direct_blocks: [0; 12],
+            indirect_block: 0,
+        };
+
+        Self::write_inode_to_block(
+            self.superblock.inode_table_start as usize,
+            inum,
+            &inode_inner,
+        )?;
+
+        let mut dirent = DirEnt {
+            inum: inum as u32,
+            name_len: name.len() as u8,
+            name: [0; 27],
+        };
+        dirent.name[..name.len()].copy_from_slice(name);
+        Self::write_dirent(parent_inner.direct_blocks[block_idx], block_offset, &dirent)?;
+
+        parent_inner.metadata.sz = parent_inner
+            .metadata
+            .sz
+            .checked_add(size_of::<DirEnt>() as u32)
+            .ok_or(VfsError::Fs)?;
+        Self::write_inode_to_block(
+            self.superblock.inode_table_start as usize,
+            parent.inum,
+            &parent_inner,
+        )?;
+
+        Vsfs::<BD>::read_inode(parent.fs.clone(), inum)
+    }
+
+    fn allocate_inode(&self) -> VfsResult<usize> {
+        Self::allocate_bitmap_bit(
+            self.superblock.inode_bitmap_block,
+            1,
+            self.superblock.ninodes as usize,
+        )
+    }
+
+    fn allocate_data_block(&self) -> VfsResult<u32> {
+        let bit = Self::allocate_bitmap_bit(
+            self.superblock.data_bitmap_block,
+            0,
+            (self.superblock.nblocks - self.superblock.data_block_start) as usize,
+        )?;
+
+        Ok(self.superblock.data_block_start + bit as u32)
+    }
+
+    fn allocate_bitmap_bit(
+        bitmap_block: u32,
+        start_bit: usize,
+        end_bit: usize,
+    ) -> VfsResult<usize> {
+        let bits_per_sector = SECTOR_SIZE * 8;
+        let start_sector = start_bit / bits_per_sector;
+        let end_sector = end_bit.div_ceil(bits_per_sector);
+        if end_sector > SECTORS_PER_BLOCK {
+            return Err(VfsError::Fs);
+        }
+
+        let mut buf = [0; SECTOR_SIZE];
+        for sector_offset in start_sector..end_sector {
+            BD::read_sector(
+                bitmap_block as usize * SECTORS_PER_BLOCK + sector_offset,
+                &mut buf,
+            )?;
+
+            let sector_start_bit = sector_offset * bits_per_sector;
+            let local_start = start_bit.saturating_sub(sector_start_bit);
+            let local_end = core::cmp::min(end_bit - sector_start_bit, bits_per_sector);
+            for local_bit in local_start..local_end {
+                let byte_idx = local_bit / 8;
+                let mask = 1 << (local_bit % 8);
+                if buf[byte_idx] & mask == 0 {
+                    buf[byte_idx] |= mask;
+                    BD::write_sector(
+                        bitmap_block as usize * SECTORS_PER_BLOCK + sector_offset,
+                        &buf,
+                    )?;
+                    return Ok(sector_start_bit + local_bit);
+                }
+            }
+        }
+
+        Err(VfsError::Fs)
+    }
+
+    fn write_inode_to_block(
+        inode_table_start: usize,
+        inum: usize,
+        inner: &INodeInner,
+    ) -> VfsResult<()> {
+        let inode_byte_offset = inode_table_start * BLOCK_SIZE + inum * size_of::<INodeInner>();
+        let inode_sector = inode_byte_offset / SECTOR_SIZE;
+        let inode_offset = inode_byte_offset % SECTOR_SIZE;
+
+        let bytes = unsafe {
+            slice::from_raw_parts(
+                inner as *const INodeInner as *const u8,
+                size_of::<INodeInner>(),
+            )
+        };
+        if inode_offset + bytes.len() > SECTOR_SIZE {
+            return Err(VfsError::Fs);
+        }
+
+        let buf = &mut [0; SECTOR_SIZE];
+        BD::read_sector(inode_sector, buf)?;
+        buf[inode_offset..inode_offset + bytes.len()].copy_from_slice(bytes);
+        BD::write_sector(inode_sector, buf)
+    }
+
+    fn write_dirent(block: u32, block_offset: usize, dirent: &DirEnt) -> VfsResult<()> {
+        let sector_idx = block_offset / SECTOR_SIZE;
+        let sector_offset = block_offset % SECTOR_SIZE;
+        let bytes = unsafe {
+            slice::from_raw_parts(dirent as *const DirEnt as *const u8, size_of::<DirEnt>())
+        };
+        if sector_idx >= SECTORS_PER_BLOCK || sector_offset + bytes.len() > SECTOR_SIZE {
+            return Err(VfsError::Fs);
+        }
+
+        let buf = &mut [0; SECTOR_SIZE];
+        let sector = block as usize * SECTORS_PER_BLOCK + sector_idx;
+        BD::read_sector(sector, buf)?;
+        buf[sector_offset..sector_offset + bytes.len()].copy_from_slice(bytes);
+        BD::write_sector(sector, buf)
+    }
+
     /// Returns a cached inode, reading it from disk on cache miss.
     ///
     /// The inode cache lock is not held while the disk is accessed. The cache
