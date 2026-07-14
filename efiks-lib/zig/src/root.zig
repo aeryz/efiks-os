@@ -2,14 +2,18 @@ const std = @import("std");
 
 pub const BrkAllocator = @import("brk_allocator.zig");
 
-const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait };
+const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait, open };
 
 pub inline fn write(buf: []const u8) isize {
     return syscall_write(buf.ptr, buf.len);
 }
 
-pub inline fn read(buf: []u8) isize {
-    return syscall_read(buf.ptr, buf.len);
+pub inline fn read(fd: usize, buf: []u8) isize {
+    return syscall_read(fd, buf.ptr, buf.len);
+}
+
+pub inline fn open(path: [*]u8, flags: u32) isize {
+    return syscall_open(path, flags);
 }
 
 pub fn syscall_write(data_ptr: [*]const u8, len: usize) isize {
@@ -24,13 +28,24 @@ pub fn syscall_write(data_ptr: [*]const u8, len: usize) isize {
     return @bitCast(ret);
 }
 
-pub fn syscall_read(buf: [*]u8, count: usize) isize {
+pub fn syscall_read(fd: usize, buf: [*]u8, count: usize) isize {
     const ret = asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
         : [number] "{x17}" (Syscall.read),
-          [fd] "{x10}" (@as(usize, 0)),
+          [fd] "{x10}" (fd),
           [buf] "{x11}" (@intFromPtr(buf)),
           [count] "{x12}" (count),
+        : .{ .memory = true });
+
+    return @bitCast(ret);
+}
+
+pub fn syscall_open(path: [*]u8, flags: u32) isize {
+    const ret = asm volatile ("ecall"
+        : [ret] "={x10}" (-> usize),
+        : [number] "{x17}" (Syscall.open),
+          [path] "{x10}" (@intFromPtr(path)),
+          [flags] "{x11}" (flags),
         : .{ .memory = true });
 
     return @bitCast(ret);

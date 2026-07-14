@@ -30,7 +30,7 @@ fn main(_: usize, _: [*]const ?[*:0]const u8) i32 {
         _ = efiks.write(PROMPT);
 
         while (buf[pos] != '\n' and buf[pos] != '\r') {
-            const n_read = efiks.read(buf[pos..(pos + 1)]);
+            const n_read = efiks.read(0, buf[pos..(pos + 1)]);
             if (n_read == 0) {
                 _ = efiks.write("\n");
                 break;
@@ -84,6 +84,27 @@ fn main(_: usize, _: [*]const ?[*:0]const u8) i32 {
 
                 const str = std.fmt.bufPrint(&b, "child finished {} finished execution with code {}\n", .{ res.pid, res.term.exited }) catch unreachable;
                 _ = efiks.write(@constCast(str));
+            }
+        } else if (cmd.len > 3 and std.mem.eql(u8, cmd[0..4], "cat ")) {
+            const fd = efiks.open(@ptrCast(cmd[4..]), 0);
+            var b: [128]u8 = undefined;
+            if (fd < 0) {
+                const str = std.fmt.bufPrint(&b, "cat: failed to open file (err: {})\n", .{fd}) catch unreachable;
+                _ = efiks.write(@constCast(str));
+                continue;
+            }
+
+            while (true) {
+                const n_read = efiks.read(@intCast(fd), &buf);
+                if (n_read <= 0) {
+                    if (n_read != 0) {
+                        const in_str = std.fmt.bufPrint(&b, "cat: read failed: {}\n", .{n_read}) catch unreachable;
+                        _ = efiks.write(@constCast(in_str));
+                    }
+                    break;
+                }
+
+                _ = efiks.write(@constCast(buf[0..@intCast(n_read)]));
             }
         } else if (std.mem.eql(u8, cmd, "exit")) {
             _ = efiks.syscall_exit(0);

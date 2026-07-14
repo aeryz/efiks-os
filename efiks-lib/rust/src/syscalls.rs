@@ -7,6 +7,7 @@ pub const SYSCALL_SLEEP_MS: usize = 3;
 // only.
 pub const SYSCALL_SHUTDOWN: usize = 4;
 pub const SYSCALL_EXIT: usize = 5;
+pub const SYSCALL_OPEN: usize = 8;
 
 pub fn write(data_ptr: *const u8, len: usize) -> isize {
     let ret: isize;
@@ -34,6 +35,22 @@ pub fn read(buf: *mut u8, count: usize) -> isize {
             in("a7") SYSCALL_READ,
             in("a1") buf,
             in("a2") count,
+            lateout("a0") ret,
+            options(nostack),
+        )
+    }
+
+    ret
+}
+
+pub fn open(path: *const u8, flags: u32) -> isize {
+    let ret: isize;
+    unsafe {
+        asm!(
+            "ecall",
+            in("a7") SYSCALL_OPEN,
+            in("a0") path,
+            in("a1") flags,
             lateout("a0") ret,
             options(nostack),
         )
