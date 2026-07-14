@@ -17,6 +17,8 @@ pub enum Errno {
     EFault = 14,
     /// Device or resource busy
     EBusy = 16,
+    /// File exists
+    EExist = 17,
     /// Function not implemented
     ENoSys = 38,
     /// Invalid argument

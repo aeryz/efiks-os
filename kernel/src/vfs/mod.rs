@@ -59,6 +59,24 @@ pub fn mount<BD: BlockDevice + 'static + Send + Sync>(
 /// The mount with the longest matching path prefix handles the request. The
 /// path passed to the filesystem root is relative to that mount point.
 pub fn open(path: &[u8]) -> VfsResult<File> {
+    let (fs, relative_path) = resolve_path(path)?;
+
+    let root = fs.root()?;
+    root.open(&relative_path)
+}
+
+/// Creates an absolute path through the mounted filesystem tree.
+///
+/// The mount with the longest matching path prefix handles the request. The
+/// path passed to the filesystem root is relative to that mount point.
+pub fn create(path: &[u8]) -> VfsResult<File> {
+    let (fs, relative_path) = resolve_path(path)?;
+
+    let root = fs.root()?;
+    root.create(&relative_path)
+}
+
+fn resolve_path(path: &[u8]) -> VfsResult<(Arc<dyn Filesystem>, Vec<u8>)> {
     let mounts = FILE_SYSTEMS.file_systems.lock();
     let (mount_path, fs) = find_mount(&mounts, path).ok_or(VfsError::Fs)?;
 
@@ -74,8 +92,7 @@ pub fn open(path: &[u8]) -> VfsResult<File> {
 
     drop(mounts);
 
-    let root = fs.root()?;
-    root.open(&relative_path)
+    Ok((fs, relative_path))
 }
 
 // TODO(aeryz): This is messed up, it's a huge burden to be needing to iterate

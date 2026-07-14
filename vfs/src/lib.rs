@@ -43,6 +43,8 @@ pub enum VfsError {
     AlreadyMounted,
     /// A file offset or seek target is outside the supported range.
     OutOfBounds,
+    /// File not found,
+    NotFound,
     /// Catch-all for errors that do not yet have a precise variant.
     Unknown,
 }
@@ -52,6 +54,7 @@ impl IntoError for VfsError {
         match self {
             Self::DeviceIO | Self::Fs | Self::Unknown => Errno::EIO,
             Self::OutOfBounds => Errno::EOverflow,
+            Self::NotFound => Errno::ENoEnt,
             Self::AlreadyMounted => Errno::EBusy,
         }
     }
@@ -68,6 +71,9 @@ pub trait VNode: Send + Sync {
     /// if one has the inode for `/path/to/folder`, opening `file/path` will
     /// open the file at `/path/to/folder/file/path`.
     fn open(&self, path: &[u8]) -> VfsResult<File>;
+
+    /// Creates a file at `path` relative to the `self` inode.
+    fn create(&self, path: &[u8]) -> VfsResult<File>;
 
     /// Reads at most `buf.len()` bytes from this inode starting from the offset
     /// and returns the number of bytes read.
