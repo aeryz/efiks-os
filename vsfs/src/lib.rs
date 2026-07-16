@@ -446,18 +446,36 @@ impl<BD: BlockDevice> Vsfs<BD> {
             Err(err) => return Err(err),
         }
 
-        let dirent_offset = parent_inner.metadata.sz as usize;
+        let original_parent = *parent_inner;
+        let mut updated_parent = original_parent;
+        updated_parent.metadata.sz = updated_parent
+            .metadata
+            .sz
+            .checked_add(size_of::<DirEnt>() as u32)
+            .ok_or(VfsError::Fs)?;
+
+        let dirent_offset = original_parent.metadata.sz as usize;
         let block_idx = dirent_offset / BLOCK_SIZE;
         let block_offset = dirent_offset % BLOCK_SIZE;
-        if block_idx >= parent_inner.direct_blocks.len() {
+        if block_idx >= updated_parent.direct_blocks.len() {
             return Err(VfsError::Fs);
         }
 
-        if parent_inner.direct_blocks[block_idx] == 0 {
-            parent_inner.direct_blocks[block_idx] = self.allocate_data_block()?;
-        }
+        let allocated_data_block = if updated_parent.direct_blocks[block_idx] == 0 {
+            let block = self.allocate_data_block()?;
+            updated_parent.direct_blocks[block_idx] = block;
+            Some(block)
+        } else {
+            None
+        };
 
-        let inum = self.allocate_inode()?;
+        let inum = match self.allocate_inode() {
+            Ok(inum) => inum,
+            Err(err) => {
+                self.free_create_allocations(None, allocated_data_block);
+                return Err(err);
+            }
+        };
         let inode_inner = INodeInner {
             ty: Type::File,
             link_count: 1,
@@ -466,11 +484,14 @@ impl<BD: BlockDevice> Vsfs<BD> {
             indirect_block: 0,
         };
 
-        Self::write_inode_to_block(
+        if let Err(err) = Self::write_inode_to_block(
             self.superblock.inode_table_start as usize,
             inum,
             &inode_inner,
-        )?;
+        ) {
+            self.free_create_allocations(Some(inum), allocated_data_block);
+            return Err(err);
+        }
 
         let mut dirent = DirEnt {
             inum: inum as u32,
@@ -478,20 +499,64 @@ impl<BD: BlockDevice> Vsfs<BD> {
             name: [0; 27],
         };
         dirent.name[..name.len()].copy_from_slice(name);
-        Self::write_dirent(parent_inner.direct_blocks[block_idx], block_offset, &dirent)?;
+        if let Err(err) = Self::write_dirent(
+            updated_parent.direct_blocks[block_idx],
+            block_offset,
+            &dirent,
+        ) {
+            self.free_create_allocations(Some(inum), allocated_data_block);
+            return Err(err);
+        }
 
-        parent_inner.metadata.sz = parent_inner
-            .metadata
-            .sz
-            .checked_add(size_of::<DirEnt>() as u32)
-            .ok_or(VfsError::Fs)?;
-        Self::write_inode_to_block(
+        if let Err(err) = Self::write_inode_to_block(
             self.superblock.inode_table_start as usize,
             parent.inum,
-            &parent_inner,
-        )?;
+            &updated_parent,
+        ) {
+            let empty_dirent = DirEnt {
+                inum: 0,
+                name_len: 0,
+                name: [0; 27],
+            };
+            let _ = Self::write_dirent(
+                updated_parent.direct_blocks[block_idx],
+                block_offset,
+                &empty_dirent,
+            );
+            // If this fails, the on-disk parent may still reference the new
+            // resources, so leaking them is safer than freeing them.
+            if Self::write_inode_to_block(
+                self.superblock.inode_table_start as usize,
+                parent.inum,
+                &original_parent,
+            )
+            .is_ok()
+            {
+                self.free_create_allocations(Some(inum), allocated_data_block);
+            }
+            return Err(err);
+        }
 
-        Vsfs::<BD>::read_inode(parent.fs.clone(), inum)
+        *parent_inner = updated_parent;
+
+        let inode = Arc::new(INode {
+            inum,
+            fs: parent.fs.clone(),
+            inner: Arc::new(RwLock::new(inode_inner)),
+            _marker: PhantomData,
+        });
+        self.inode_cache.lock().insert(inum, inode.clone());
+        Ok(inode)
+    }
+
+    /// Best-effort cleanup for resources reserved while creating a file.
+    fn free_create_allocations(&self, inum: Option<usize>, data_block: Option<u32>) {
+        if let Some(inum) = inum {
+            let _ = self.free_inode(inum);
+        }
+        if let Some(block) = data_block {
+            let _ = self.free_data_block(block);
+        }
     }
 
     fn allocate_inode(&self) -> VfsResult<usize> {
@@ -512,6 +577,19 @@ impl<BD: BlockDevice> Vsfs<BD> {
         )?;
 
         Ok(self.superblock.data_block_start + bit as u32)
+    }
+
+    fn free_inode(&self, inum: usize) -> VfsResult<()> {
+        let _guard = self.inode_bitmap_lock.lock();
+        self.free_bitmap_bit(self.superblock.inode_bitmap_block, inum)
+    }
+
+    fn free_data_block(&self, block: u32) -> VfsResult<()> {
+        let bit = block
+            .checked_sub(self.superblock.data_block_start)
+            .ok_or(VfsError::Fs)? as usize;
+        let _guard = self.data_bitmap_lock.lock();
+        self.free_bitmap_bit(self.superblock.data_bitmap_block, bit)
     }
 
     fn allocate_bitmap_bit(
@@ -552,6 +630,25 @@ impl<BD: BlockDevice> Vsfs<BD> {
         }
 
         Err(VfsError::Fs)
+    }
+
+    fn free_bitmap_bit(&self, bitmap_block: u32, bit: usize) -> VfsResult<()> {
+        let sector_offset = bit / (SECTOR_SIZE * 8);
+        if sector_offset >= SECTORS_PER_BLOCK {
+            return Err(VfsError::Fs);
+        }
+
+        let byte_idx = bit % (SECTOR_SIZE * 8) / 8;
+        let mask = 1 << (bit % 8);
+        let sector = bitmap_block as usize * SECTORS_PER_BLOCK + sector_offset;
+        let mut buf = [0; SECTOR_SIZE];
+        BD::read_sector(sector, &mut buf)?;
+        if buf[byte_idx] & mask == 0 {
+            return Err(VfsError::Fs);
+        }
+
+        buf[byte_idx] &= !mask;
+        BD::write_sector(sector, &buf)
     }
 
     fn write_inode_to_block(
