@@ -93,6 +93,9 @@ fn main(_: usize, _: [*]const ?[*:0]const u8) i32 {
                 _ = efiks.write(@constCast(str));
                 continue;
             }
+            defer {
+                _ = efiks.syscall_close(@intCast(fd));
+            }
 
             while (true) {
                 const n_read = efiks.read(@intCast(fd), &buf);
