@@ -18,6 +18,7 @@ pub(crate) const SYS_EXIT: usize = 5;
 pub(crate) const SYS_SPAWN: usize = 6;
 pub(crate) const SYS_WAIT: usize = 7;
 pub(crate) const SYS_OPEN: usize = 8;
+pub(crate) const SYS_CLOSE: usize = 9;
 // Match the linux kernel for Zig's `BrkAllocator` compatibility.
 pub(crate) const SYS_BRK: usize = 214;
 
@@ -76,6 +77,10 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             let path = UserBuf::new(tf.get_arg::<0>()).ok_or(Error::InvalidArgs)?;
             let flags = tf.get_arg::<1>() as u32;
             syscall_open::do_syscall_open(path, flags).map(|fd| fd as isize)
+        }
+        SYS_CLOSE => {
+            let fd = tf.get_arg::<0>() as u32;
+            do_syscall_close(fd).map(|_| 0)
         }
         _ => Err(Error::NoSys),
     }
@@ -302,4 +307,14 @@ mod syscall_open {
             Err(err) => Err(err.into()),
         }
     }
+}
+
+pub fn do_syscall_close(fd: u32) -> Result<(), Error> {
+    let _ = sched::load_core_ctx()
+        .current_task
+        .file_table
+        .lock()
+        .close_file(fd as usize)
+        .ok_or(Errno::EBadF)?;
+    Ok(())
 }
