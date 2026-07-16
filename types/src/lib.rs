@@ -9,6 +9,8 @@ pub enum Errno {
     EIO = 5,
     /// Exec format error
     ENoExec = 8,
+    /// Bad file descriptor
+    EBadF = 9,
     /// No child processes
     EChild = 10,
     /// Cannot allocate memory
