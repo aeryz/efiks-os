@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const BrkAllocator = @import("brk_allocator.zig");
 
-const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait, open };
+const Syscall = enum(usize) { write = 1, read, sleep_ms, shutdown, exit, spawn, wait, open, close };
 
 pub inline fn write(buf: []const u8) isize {
     return syscall_write(buf.ptr, buf.len);
@@ -46,6 +46,16 @@ pub fn syscall_open(path: [*]u8, flags: u32) isize {
         : [number] "{x17}" (Syscall.open),
           [path] "{x10}" (@intFromPtr(path)),
           [flags] "{x11}" (flags),
+        : .{ .memory = true });
+
+    return @bitCast(ret);
+}
+
+pub fn syscall_close(fd: u32) isize {
+    const ret = asm volatile ("ecall"
+        : [ret] "={x10}" (-> usize),
+        : [number] "{x17}" (Syscall.close),
+          [fd] "{x10}" (@as(usize, fd)),
         : .{ .memory = true });
 
     return @bitCast(ret);
