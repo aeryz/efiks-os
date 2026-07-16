@@ -17,9 +17,23 @@ impl FileTable {
         ])
     }
 
+    // TODO(aeryz): Ik linux reuses fds but I don't like it. Let's have it for now
+    // but I'm probably gonna change it. The problem is that libc uses int fds so
+    // I'll probably need to pack the index + generation to the int.
     pub fn add_file(&mut self, file: File) -> usize {
-        self.0.push(Some(FileRef::new(file)));
-        self.0.len() - 1
+        if let Some((i, slot)) = self.0.iter_mut().enumerate().find_map(|(i, slot)| {
+            if slot.is_none() {
+                Some((i, slot))
+            } else {
+                None
+            }
+        }) {
+            *slot = Some(FileRef::new(file));
+            i
+        } else {
+            self.0.push(Some(FileRef::new(file)));
+            self.0.len() - 1
+        }
     }
 
     pub fn get_file(&self, fd: usize) -> Option<FileRef> {
