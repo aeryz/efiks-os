@@ -38,6 +38,8 @@ const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
 pub struct Vsfs<BD: BlockDevice> {
     superblock: SuperBlock,
     inode_cache: SpinLock<BTreeMap<usize, Arc<INode<BD>>>>,
+    inode_bitmap_lock: SpinLock<()>,
+    data_bitmap_lock: SpinLock<()>,
     _marker: PhantomData<BD>,
 }
 
@@ -404,6 +406,8 @@ pub fn initialize<BD: BlockDevice>() -> VfsResult<Arc<Vsfs<BD>>> {
         superblock: sb,
         inode_cache: SpinLock::new(BTreeMap::new()),
         _marker: PhantomData,
+        inode_bitmap_lock: SpinLock::new(()),
+        data_bitmap_lock: SpinLock::new(()),
     });
 
     // Read will force the root inode to be cached
@@ -491,7 +495,8 @@ impl<BD: BlockDevice> Vsfs<BD> {
     }
 
     fn allocate_inode(&self) -> VfsResult<usize> {
-        Self::allocate_bitmap_bit(
+        let _guard = self.inode_bitmap_lock.lock();
+        self.allocate_bitmap_bit(
             self.superblock.inode_bitmap_block,
             1,
             self.superblock.ninodes as usize,
@@ -499,7 +504,8 @@ impl<BD: BlockDevice> Vsfs<BD> {
     }
 
     fn allocate_data_block(&self) -> VfsResult<u32> {
-        let bit = Self::allocate_bitmap_bit(
+        let _guard = self.data_bitmap_lock.lock();
+        let bit = self.allocate_bitmap_bit(
             self.superblock.data_bitmap_block,
             0,
             (self.superblock.nblocks - self.superblock.data_block_start) as usize,
@@ -509,6 +515,7 @@ impl<BD: BlockDevice> Vsfs<BD> {
     }
 
     fn allocate_bitmap_bit(
+        &self,
         bitmap_block: u32,
         start_bit: usize,
         end_bit: usize,
