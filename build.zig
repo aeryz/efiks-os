@@ -34,4 +34,17 @@ pub fn build(b: *std.Build) void {
 
     const shell_step = b.step("shell", "Build userspace Zig shell");
     shell_step.dependOn(&install_shell.step);
+
+    const efiks_check = b.addLibrary(.{
+        .name = "efiks",
+        .root_module = efiks_lib_zig.module("efiks"),
+    });
+    const shell_check = b.addExecutable(.{
+        .name = "shell",
+        .root_module = shell_dep.module("shell"),
+    });
+
+    const check = b.step("check", "Check workspace");
+    check.dependOn(&efiks_check.step);
+    check.dependOn(&shell_check.step);
 }
