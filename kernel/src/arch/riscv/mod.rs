@@ -2,6 +2,7 @@ mod boot;
 mod context;
 pub mod mmu;
 pub mod plic;
+pub mod syscall;
 pub mod trap;
 
 use core::ptr::NonNull;

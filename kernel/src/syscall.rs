@@ -2,25 +2,13 @@ use alloc::vec::Vec;
 
 use crate::{
     Arch,
-    arch::{Architecture, TrapFrame, TrapFrameOf},
+    arch::{Architecture, TrapFrame, TrapFrameOf, syscall},
     error::Error,
     mm::{UserBuf, UserBufMut, UserPtr, VirtAddr},
     sched,
     task::{self, RawWaitStatus},
 };
 use efiks_types::Errno;
-
-pub(crate) const SYS_WRITE: usize = 1;
-pub(crate) const SYS_READ: usize = 2;
-pub(crate) const SYS_SLEEP_MS: usize = 3;
-pub(crate) const SYS_SHUTDOWN: usize = 4;
-pub(crate) const SYS_EXIT: usize = 5;
-pub(crate) const SYS_SPAWN: usize = 6;
-pub(crate) const SYS_WAIT: usize = 7;
-pub(crate) const SYS_OPEN: usize = 8;
-pub(crate) const SYS_CLOSE: usize = 9;
-// Match the linux kernel for Zig's `BrkAllocator` compatibility.
-pub(crate) const SYS_BRK: usize = 214;
 
 pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
     let syscall_number = tf.get_syscall();
@@ -34,51 +22,51 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
 fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Result<isize, Error> {
     match syscall_number {
-        SYS_WRITE => {
+        syscall::SYS_READ => {
+            let fd = tf.get_arg::<0>();
+            let buf = UserBufMut::new(tf.get_arg::<1>()).ok_or(Error::InvalidArgs)?;
+            let count = tf.get_arg::<2>();
+            do_syscall_read(fd, buf, count).map(|n| n as isize)
+        }
+        syscall::SYS_WRITE => {
             let fd = tf.get_arg::<0>();
             let buf = UserBuf::new(tf.get_arg::<1>()).ok_or(Error::InvalidArgs)?;
             let count = tf.get_arg::<2>();
 
             do_syscall_write(fd, buf, count).map(|n| n as isize)
         }
-        SYS_READ => {
-            let fd = tf.get_arg::<0>();
-            let buf = UserBufMut::new(tf.get_arg::<1>()).ok_or(Error::InvalidArgs)?;
-            let count = tf.get_arg::<2>();
-            do_syscall_read(fd, buf, count).map(|n| n as isize)
+        syscall::SYS_EXIT => {
+            let exit_code = tf.get_arg::<0>() as i8;
+            do_syscall_exit(exit_code);
+            Ok(0)
         }
-        SYS_SHUTDOWN => do_syscall_shutdown(),
-        SYS_SLEEP_MS => {
+        syscall::SYS_SLEEP_MS => {
             let time_ms = tf.get_arg::<0>();
             do_syscall_sleep_ms(time_ms);
             Ok(0)
         }
-        SYS_SPAWN => {
+        syscall::SYS_SHUTDOWN => do_syscall_shutdown(),
+        // TODO(aeryz): Shouldn't this supposed to be `Brk`?
+        syscall::SYS_BRK => {
+            let brk = tf.get_arg::<0>() as usize;
+            do_syscall_brk(brk).map(|n| n as isize)
+        }
+        syscall::SYS_WAIT => {
+            let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<0>());
+            do_syscall_wait(out_wstatus).map(|p| p.raw() as isize)
+        }
+        syscall::SYS_SPAWN => {
             let out_pid = UserPtr::<task::Pid>::new(tf.get_arg::<0>());
             let path = UserBuf::new(tf.get_arg::<1>()).ok_or(Error::InvalidArgs)?;
             let argv: UserPtr<UserPtr<u8>> = UserPtr::new(tf.get_arg::<2>());
             do_syscall_spawn(path, argv, out_pid).map(|_| 0)
         }
-        SYS_EXIT => {
-            let exit_code = tf.get_arg::<0>() as i8;
-            do_syscall_exit(exit_code);
-            Ok(0)
-        }
-        SYS_WAIT => {
-            let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<0>());
-            do_syscall_wait(out_wstatus).map(|p| p.raw() as isize)
-        }
-        // TODO(aeryz): Shouldn't this supposed to be `Brk`?
-        SYS_BRK => {
-            let brk = tf.get_arg::<0>() as usize;
-            do_syscall_brk(brk).map(|n| n as isize)
-        }
-        SYS_OPEN => {
+        syscall::SYS_OPEN => {
             let path = UserBuf::new(tf.get_arg::<0>()).ok_or(Error::InvalidArgs)?;
             let flags = tf.get_arg::<1>() as u32;
             syscall_open::do_syscall_open(path, flags).map(|fd| fd as isize)
         }
-        SYS_CLOSE => {
+        syscall::SYS_CLOSE => {
             let fd = tf.get_arg::<0>() as u32;
             do_syscall_close(fd).map(|_| 0)
         }
