@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
-use crate::{mm::VirtAddr, task::Task};
+use crate::{error::Error, mm::VirtAddr, task::Task};
 
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {
@@ -166,6 +166,8 @@ pub trait TrapFrame {
     fn set_syscall_return_value(&mut self, ret: isize);
 
     fn get_arg<const I: usize>(&self) -> usize;
+
+    fn get_arg_as<const I: usize, T: TryFrom<usize>>(&self) -> Result<T, Error>;
 }
 
 pub trait Context {

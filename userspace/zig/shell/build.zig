@@ -17,15 +17,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const shell_module = b.addModule("shell", .{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = true,
+        .imports = &.{.{ .name = "efiks", .module = efiks_lib_zig.module("efiks") }},
+    });
+
     const shell = b.addExecutable(.{
         .name = "shell",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .single_threaded = true,
-            .imports = &.{.{ .name = "efiks", .module = efiks_lib_zig.module("efiks") }},
-        }),
+        .root_module = shell_module,
     });
 
     b.installArtifact(shell);

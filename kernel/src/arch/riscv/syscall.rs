@@ -17,7 +17,6 @@ pub const SYS_EXIT: usize = 93;
 // __kernel_timespec __user *rmtp);
 // TODO(aeryz): change the impl to nanosleep
 pub const SYS_SLEEP_MS: usize = 101;
-pub const SYS_SHUTDOWN: usize = 210;
 // long sys_brk(unsigned long brk);
 pub const SYS_BRK: usize = 214;
 // long sys_wait4(pid_t pid, int __user *stat_addr, int options, struct rusage

@@ -36,8 +36,8 @@ impl FileTable {
         }
     }
 
-    pub fn get_file(&self, fd: usize) -> Option<FileRef> {
-        self.0.get(fd)?.clone()
+    pub fn get_file(&self, fd: u32) -> Option<FileRef> {
+        self.0.get(fd as usize)?.clone()
     }
 
     pub fn close_file(&mut self, fd: usize) -> Option<FileRef> {

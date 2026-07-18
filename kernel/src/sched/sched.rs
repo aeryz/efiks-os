@@ -312,17 +312,13 @@ pub fn sleep_current_task(time_ms: usize) {
 }
 
 pub fn load_core_ctx<'a>() -> &'a percpu::PerCoreContext {
-    unsafe {
-        let task = Arch::load_this_cpu_ctx::<Task>();
-        (*(*task).thread_info.per_cpu_ctx.get()).as_ref().unwrap()
-    }
+    let task = Arch::load_this_cpu_ctx::<Task>();
+    unsafe { (*(*task).thread_info.per_cpu_ctx.get()).as_ref().unwrap() }
 }
 
 pub(super) fn load_core_ctx_mut<'a>() -> &'a mut percpu::PerCoreContext {
-    unsafe {
-        let task = Arch::load_this_cpu_ctx::<Task>();
-        (*(*task).thread_info.per_cpu_ctx.get()).as_mut().unwrap()
-    }
+    let task = Arch::load_this_cpu_ctx::<Task>();
+    unsafe { (*(*task).thread_info.per_cpu_ctx.get()).as_mut().unwrap() }
 }
 
 impl core::fmt::Debug for PerCoreScheduler {

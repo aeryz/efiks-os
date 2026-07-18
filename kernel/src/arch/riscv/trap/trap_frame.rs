@@ -1,5 +1,6 @@
 use crate::{
     arch::{self, Riscv},
+    error::Error,
     mm::VirtAddr,
 };
 
@@ -97,6 +98,12 @@ impl arch::TrapFrame for TrapFrame {
             7 => self.a7,
             _ => panic!("invalid"),
         }
+    }
+
+    fn get_arg_as<const I: usize, T: TryFrom<usize>>(&self) -> Result<T, Error> {
+        self.get_arg::<I>()
+            .try_into()
+            .map_err(|_| Error::InvalidArgs)
     }
 
     fn get_syscall(&self) -> usize {
