@@ -69,7 +69,9 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             let argv: UserPtr<UserPtr<u8>> = UserPtr::new(tf.get_arg::<2>());
             sys_spawn(path, argv, out_pid).map(|_| 0)
         }
-        _ => Err(Error::NoSys),
+        n => {
+            panic!("unsupported syscall: {n}")
+        }
     }
 }
 
@@ -110,6 +112,7 @@ mod syscall_open {
         }
     }
 
+    // TODO(aeryz): make this linux-compatible
     /// ```c
     /// long sys_openat(
     ///     int dfd,
@@ -242,6 +245,7 @@ fn sys_exit(exit_code: i8) {
     task::exit(task, exit_code);
 }
 
+// TODO(aeryz): make this linux-compatible
 /// ```c
 /// long sys_nanosleep(
 ///     struct __kernel_timespec __user *rqtp,
@@ -263,6 +267,7 @@ fn sys_brk(brk: usize) -> Result<usize, Error> {
     Ok(new_brk)
 }
 
+// TODO(aeryz): make this linux-compatible
 /// ```c
 /// long sys_wait4(
 ///     pid_t pid,
