@@ -22,6 +22,9 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
 fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Result<isize, Error> {
     match syscall_number {
+        // TODO(aeryz): this is stub to support zig linux
+        // Inappropriate ioctl for device
+        syscall::SYS_IOCTL => Err(Errno::ENoTty.into()),
         syscall::SYS_OPEN => {
             let path = UserBuf::new(tf.get_arg::<0>()).ok_or(Error::InvalidArgs)?;
             let flags = tf.get_arg_as::<1, u32>()?;
@@ -74,6 +77,7 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             sys_sleep_ms(time_ms);
             Ok(0)
         }
+        syscall::SYS_GETTID => Ok(sys_gettid() as isize),
         // TODO(aeryz): Shouldn't this supposed to be `Brk`?
         syscall::SYS_BRK => {
             let brk = tf.get_arg::<0>() as usize;
@@ -345,6 +349,14 @@ fn sys_exit(exit_code: i8) {
 fn sys_sleep_ms(time_ms: usize) {
     // TODO(aeryz): task subsystem should know how to put this into sleep.
     sched::sleep_current_task(time_ms);
+}
+
+// TODO(aeryz): we don't have threads so it just returns the pid
+/// ```c
+/// long sys_gettid(void);
+/// ```
+fn sys_gettid() -> usize {
+    sched::load_core_ctx().current_task.pid.raw()
 }
 
 /// ```c

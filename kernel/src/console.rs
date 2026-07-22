@@ -31,12 +31,12 @@ impl VNode for ConsoleVNode {
             loop {
                 match driver::uart::try_get_char() {
                     Some(c) => {
-                        log::trace!("read something, not scheduling\n");
+                        buf[i] = if c == b'\r' { b'\n' } else { c };
+                        i += 1;
+
                         if c == b'\n' || c == b'\r' {
                             return Ok(i);
                         }
-                        buf[i] = c;
-                        i += 1;
                         break;
                     }
                     None => {
