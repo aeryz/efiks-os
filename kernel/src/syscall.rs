@@ -44,13 +44,23 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
 
             sys_write(fd, buf, count).map(|n| n as isize)
         }
+        syscall::SYS_READV => {
+            let fd = tf.get_arg_as::<0, u32>()?;
+            let iovec = UserPtr::<syscall_iov::IoVecIn>::new(tf.get_arg::<1>());
+            let iovcnt = tf.get_arg_as::<2, u32>()?;
+
+            syscall_iov::sys_readv(fd, iovec, iovcnt).map(|n| n as isize)
+        }
         syscall::SYS_WRITEV => {
             let fd = tf.get_arg_as::<0, u32>()?;
-            let iovec = UserPtr::<syscall_writev::IoVec>::new(tf.get_arg::<1>());
-            let iovcnt = tf.get_arg_as::<2, i32>()?;
+            let iovec = UserPtr::<syscall_iov::IoVecOut>::new(tf.get_arg::<1>());
+            let iovcnt = tf.get_arg_as::<2, u32>()?;
 
-            syscall_writev::sys_writev(fd, iovec, iovcnt as u32).map(|n| n as isize)
+            syscall_iov::sys_writev(fd, iovec, iovcnt).map(|n| n as isize)
         }
+        // NOTE(aeryz): This is to support writer interfaces that try the `preadv` first so that
+        // they can fallback to `readv`.
+        syscall::SYS_PREADV => Err(Errno::ESPipe.into()),
         // NOTE(aeryz): This is to support writer interfaces that try the `pwritev` first so that
         // they can fallback to `writev`.
         syscall::SYS_PWRITEV => Err(Errno::ESPipe.into()),
@@ -247,21 +257,51 @@ fn sys_write(fd: u32, buf: UserBuf, count: usize) -> Result<usize, Error> {
     Ok(count)
 }
 
-mod syscall_writev {
+/// Contains `writev` and `readv` syscalls
+mod syscall_iov {
     use super::*;
 
     #[repr(C)]
-    pub struct IoVec {
+    pub struct IoVecOut {
         // TODO(aeryz): this is normally a void*
         iov_base: UserBuf,
         iov_len: usize,
     }
 
+    pub struct IoVecIn {
+        // TODO(aeryz): this is normally a void*
+        iov_base: UserBufMut,
+        iov_len: usize,
+    }
+
+    /// ```c
+    /// long sys_readv(unsigned long fd, const struct iovec __user *vec, unsigned long vlen);
+    /// ```
+    pub fn sys_readv(fd: u32, mut io_vec: UserPtr<IoVecIn>, len: u32) -> Result<usize, Error> {
+        let mut kvec = IoVecIn {
+            iov_base: UserBufMut::new(1).expect("will not fail"),
+            iov_len: 0,
+        };
+        let mut n_read = 0;
+
+        for _ in 0..len {
+            unsafe {
+                io_vec.copy_from_user(&mut kvec);
+            }
+
+            n_read += sys_read(fd, kvec.iov_base, kvec.iov_len)?;
+
+            io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+        }
+
+        Ok(n_read)
+    }
+
     /// ```c
     /// long sys_writev(unsigned long fd, const struct iovec __user *vec, unsigned long vlen);
     /// ```
-    pub fn sys_writev(fd: u32, mut io_vec: UserPtr<IoVec>, len: u32) -> Result<usize, Error> {
-        let mut kvec = IoVec {
+    pub fn sys_writev(fd: u32, mut io_vec: UserPtr<IoVecOut>, len: u32) -> Result<usize, Error> {
+        let mut kvec = IoVecOut {
             iov_base: UserBuf::new(1).expect("will not fail"),
             iov_len: 0,
         };
