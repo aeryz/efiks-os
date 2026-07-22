@@ -25,6 +25,8 @@ pub enum Errno {
     ENoSys = 38,
     /// Invalid argument
     EInval = 22,
+    /// Illegal seek
+    ESPipe = 29,
     /// Value too large for defined data type
     EOverflow = 75,
 }

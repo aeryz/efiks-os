@@ -44,6 +44,16 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
 
             sys_write(fd, buf, count).map(|n| n as isize)
         }
+        syscall::SYS_WRITEV => {
+            let fd = tf.get_arg_as::<0, u32>()?;
+            let iovec = UserPtr::<syscall_writev::IoVec>::new(tf.get_arg::<1>());
+            let iovcnt = tf.get_arg_as::<2, i32>()?;
+
+            syscall_writev::sys_writev(fd, iovec, iovcnt as u32).map(|n| n as isize)
+        }
+        // NOTE(aeryz): This is to support writer interfaces that try the `pwritev` first so that
+        // they can fallback to `writev`.
+        syscall::SYS_PWRITEV => Err(Errno::ESPipe.into()),
         syscall::SYS_EXIT => {
             let exit_code = tf.get_arg_as::<0, i8>()?;
             sys_exit(exit_code);
@@ -235,6 +245,46 @@ fn sys_write(fd: u32, buf: UserBuf, count: usize) -> Result<usize, Error> {
     let count = file.lock().write(&kbuf[0..count])?;
 
     Ok(count)
+}
+
+mod syscall_writev {
+    use super::*;
+
+    #[repr(C)]
+    pub struct IoVec {
+        // TODO(aeryz): this is normally a void*
+        iov_base: UserBuf,
+        iov_len: usize,
+    }
+
+    /// ```c
+    /// long sys_writev(unsigned long fd, const struct iovec __user *vec, unsigned long vlen);
+    /// ```
+    pub fn sys_writev(fd: u32, mut io_vec: UserPtr<IoVec>, len: u32) -> Result<usize, Error> {
+        let mut kvec = IoVec {
+            iov_base: UserBuf::new(1).expect("will not fail"),
+            iov_len: 0,
+        };
+
+        let mut buf = Vec::new();
+        let mut n_written = 0;
+
+        for _ in 0..len {
+            unsafe {
+                io_vec.copy_from_user(&mut kvec);
+            }
+
+            if kvec.iov_len > buf.capacity() {
+                buf.resize(kvec.iov_len, 0);
+            }
+
+            n_written += sys_write(fd, kvec.iov_base, kvec.iov_len)?;
+
+            io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+        }
+
+        Ok(n_written)
+    }
 }
 
 /// ```c
