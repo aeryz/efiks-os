@@ -21,10 +21,14 @@ pub enum Errno {
     EBusy = 16,
     /// File exists
     EExist = 17,
-    /// Function not implemented
-    ENoSys = 38,
     /// Invalid argument
     EInval = 22,
+    /// Illegal seek
+    ESPipe = 29,
+    /// Inappropriate ioctl for device
+    ENoTty = 25,
+    /// Function not implemented
+    ENoSys = 38,
     /// Value too large for defined data type
     EOverflow = 75,
 }

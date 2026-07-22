@@ -22,6 +22,9 @@ pub fn dispatch_syscall(tf: &mut TrapFrameOf<Arch>) {
 
 fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Result<isize, Error> {
     match syscall_number {
+        // TODO(aeryz): this is stub to support zig linux
+        // Inappropriate ioctl for device
+        syscall::SYS_IOCTL => Err(Errno::ENoTty.into()),
         syscall::SYS_OPEN => {
             let path = UserBuf::new(tf.get_arg::<0>()).ok_or(Error::InvalidArgs)?;
             let flags = tf.get_arg_as::<1, u32>()?;
@@ -44,6 +47,26 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
 
             sys_write(fd, buf, count).map(|n| n as isize)
         }
+        syscall::SYS_READV => {
+            let fd = tf.get_arg_as::<0, u32>()?;
+            let iovec = UserPtr::<syscall_iov::IoVecIn>::new(tf.get_arg::<1>());
+            let iovcnt = tf.get_arg_as::<2, u32>()?;
+
+            syscall_iov::sys_readv(fd, iovec, iovcnt).map(|n| n as isize)
+        }
+        syscall::SYS_WRITEV => {
+            let fd = tf.get_arg_as::<0, u32>()?;
+            let iovec = UserPtr::<syscall_iov::IoVecOut>::new(tf.get_arg::<1>());
+            let iovcnt = tf.get_arg_as::<2, u32>()?;
+
+            syscall_iov::sys_writev(fd, iovec, iovcnt).map(|n| n as isize)
+        }
+        // NOTE(aeryz): This is to support writer interfaces that try the `preadv` first so that
+        // they can fallback to `readv`.
+        syscall::SYS_PREADV => Err(Errno::ESPipe.into()),
+        // NOTE(aeryz): This is to support writer interfaces that try the `pwritev` first so that
+        // they can fallback to `writev`.
+        syscall::SYS_PWRITEV => Err(Errno::ESPipe.into()),
         syscall::SYS_EXIT => {
             let exit_code = tf.get_arg_as::<0, i8>()?;
             sys_exit(exit_code);
@@ -54,6 +77,7 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             sys_sleep_ms(time_ms);
             Ok(0)
         }
+        syscall::SYS_GETTID => Ok(sys_gettid() as isize),
         // TODO(aeryz): Shouldn't this supposed to be `Brk`?
         syscall::SYS_BRK => {
             let brk = tf.get_arg::<0>() as usize;
@@ -69,7 +93,9 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             let argv: UserPtr<UserPtr<u8>> = UserPtr::new(tf.get_arg::<2>());
             sys_spawn(path, argv, out_pid).map(|_| 0)
         }
-        _ => Err(Error::NoSys),
+        n => {
+            panic!("unsupported syscall: {n}")
+        }
     }
 }
 
@@ -110,6 +136,7 @@ mod syscall_open {
         }
     }
 
+    // TODO(aeryz): make this linux-compatible
     /// ```c
     /// long sys_openat(
     ///     int dfd,
@@ -234,6 +261,76 @@ fn sys_write(fd: u32, buf: UserBuf, count: usize) -> Result<usize, Error> {
     Ok(count)
 }
 
+/// Contains `writev` and `readv` syscalls
+mod syscall_iov {
+    use super::*;
+
+    #[repr(C)]
+    pub struct IoVecOut {
+        // TODO(aeryz): this is normally a void*
+        iov_base: UserBuf,
+        iov_len: usize,
+    }
+
+    pub struct IoVecIn {
+        // TODO(aeryz): this is normally a void*
+        iov_base: UserBufMut,
+        iov_len: usize,
+    }
+
+    /// ```c
+    /// long sys_readv(unsigned long fd, const struct iovec __user *vec, unsigned long vlen);
+    /// ```
+    pub fn sys_readv(fd: u32, mut io_vec: UserPtr<IoVecIn>, len: u32) -> Result<usize, Error> {
+        let mut kvec = IoVecIn {
+            iov_base: UserBufMut::new(1).expect("will not fail"),
+            iov_len: 0,
+        };
+        let mut n_read = 0;
+
+        for _ in 0..len {
+            unsafe {
+                io_vec.copy_from_user(&mut kvec);
+            }
+
+            n_read += sys_read(fd, kvec.iov_base, kvec.iov_len)?;
+
+            io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+        }
+
+        Ok(n_read)
+    }
+
+    /// ```c
+    /// long sys_writev(unsigned long fd, const struct iovec __user *vec, unsigned long vlen);
+    /// ```
+    pub fn sys_writev(fd: u32, mut io_vec: UserPtr<IoVecOut>, len: u32) -> Result<usize, Error> {
+        let mut kvec = IoVecOut {
+            iov_base: UserBuf::new(1).expect("will not fail"),
+            iov_len: 0,
+        };
+
+        let mut buf = Vec::new();
+        let mut n_written = 0;
+
+        for _ in 0..len {
+            unsafe {
+                io_vec.copy_from_user(&mut kvec);
+            }
+
+            if kvec.iov_len > buf.capacity() {
+                buf.resize(kvec.iov_len, 0);
+            }
+
+            n_written += sys_write(fd, kvec.iov_base, kvec.iov_len)?;
+
+            io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+        }
+
+        Ok(n_written)
+    }
+}
+
 /// ```c
 /// long sys_exit(int error_code);
 /// ```
@@ -242,6 +339,7 @@ fn sys_exit(exit_code: i8) {
     task::exit(task, exit_code);
 }
 
+// TODO(aeryz): make this linux-compatible
 /// ```c
 /// long sys_nanosleep(
 ///     struct __kernel_timespec __user *rqtp,
@@ -251,6 +349,14 @@ fn sys_exit(exit_code: i8) {
 fn sys_sleep_ms(time_ms: usize) {
     // TODO(aeryz): task subsystem should know how to put this into sleep.
     sched::sleep_current_task(time_ms);
+}
+
+// TODO(aeryz): we don't have threads so it just returns the pid
+/// ```c
+/// long sys_gettid(void);
+/// ```
+fn sys_gettid() -> usize {
+    sched::load_core_ctx().current_task.pid.raw()
 }
 
 /// ```c
@@ -263,6 +369,7 @@ fn sys_brk(brk: usize) -> Result<usize, Error> {
     Ok(new_brk)
 }
 
+// TODO(aeryz): make this linux-compatible
 /// ```c
 /// long sys_wait4(
 ///     pid_t pid,

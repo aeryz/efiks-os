@@ -29,6 +29,8 @@ extern crate alloc;
 const MAGIC: u32 = 0x5653_4653; // "VSFS"
 const BLOCK_SIZE: usize = 4096;
 const SECTORS_PER_BLOCK: usize = BLOCK_SIZE / SECTOR_SIZE;
+const DIRECT_BLOCKS: usize = 12;
+const INDIRECT_BLOCK_ENTRIES: usize = BLOCK_SIZE / size_of::<u32>();
 
 /// Mounted VSFS instance.
 ///
@@ -78,8 +80,8 @@ pub struct INodeInner {
     /// Basic file metadata.
     pub metadata: Metadata,
     /// Direct data block numbers.
-    pub direct_blocks: [u32; 12],
-    /// Indirect block number. Not used by the current implementation.
+    pub direct_blocks: [u32; DIRECT_BLOCKS],
+    /// Block containing additional data block numbers.
     pub indirect_block: u32,
 }
 
@@ -120,6 +122,38 @@ pub struct DirEnt {
 }
 
 impl<BD: BlockDevice> INode<BD> {
+    /// Resolves a file-relative block number through the inode's direct or
+    /// single-indirect block pointers.
+    fn data_block(inode: &INodeInner, logical_block: usize) -> VfsResult<u32> {
+        let block = if logical_block < DIRECT_BLOCKS {
+            inode.direct_blocks[logical_block]
+        } else {
+            let indirect_index = logical_block - DIRECT_BLOCKS;
+            if indirect_index >= INDIRECT_BLOCK_ENTRIES || inode.indirect_block == 0 {
+                return Err(VfsError::Fs);
+            }
+
+            let pointer_offset = indirect_index * size_of::<u32>();
+            let sector_in_block = pointer_offset / SECTOR_SIZE;
+            let sector_offset = pointer_offset % SECTOR_SIZE;
+            let sector = inode.indirect_block as usize * SECTORS_PER_BLOCK + sector_in_block;
+            let mut sector_buf = [0; SECTOR_SIZE];
+            BD::read_sector(sector, &mut sector_buf)?;
+
+            u32::from_ne_bytes([
+                sector_buf[sector_offset],
+                sector_buf[sector_offset + 1],
+                sector_buf[sector_offset + 2],
+                sector_buf[sector_offset + 3],
+            ])
+        };
+
+        if block == 0 {
+            return Err(VfsError::Fs);
+        }
+        Ok(block)
+    }
+
     /// Looks up one path component inside a directory inode.
     ///
     /// `path` must be a single component without `/`. The caller passes the
@@ -150,14 +184,7 @@ impl<BD: BlockDevice> INode<BD> {
             let dirent_offset = dirent_idx * size_of::<DirEnt>();
             let block_idx = dirent_offset / BLOCK_SIZE;
             let block_offset = dirent_offset % BLOCK_SIZE;
-            if block_idx >= inode.direct_blocks.len() {
-                return Err(VfsError::Fs);
-            }
-
-            let block = inode.direct_blocks[block_idx];
-            if block == 0 {
-                return Err(VfsError::Fs);
-            }
+            let block = Self::data_block(inode, block_idx)?;
 
             let sector = block as usize * SECTORS_PER_BLOCK + block_offset / SECTOR_SIZE;
             BD::read_sector(sector, buf)?;
@@ -249,9 +276,9 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
 
     /// Reads bytes from a regular file.
     ///
-    /// VSFS currently supports only direct blocks. Reading past the end returns
-    /// `Ok(0)`, while discovering malformed block metadata returns
-    /// [`VfsError::Fs`] unless some bytes have already been read.
+    /// Reading past the end returns `Ok(0)`, while discovering malformed block
+    /// metadata returns [`VfsError::Fs`] unless some bytes have already been
+    /// read.
     fn read(&self, mut offset: usize, buf: &mut [u8]) -> VfsResult<usize> {
         let inner = self.inner.read_lock();
         if inner.ty != Type::File {
@@ -266,25 +293,28 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
         let mut total_read = 0;
         let mut sector_buf = [0; SECTOR_SIZE];
         let mut remaining = core::cmp::min(buf.len(), file_size - offset);
+        let mut mapped_block = None;
 
         while remaining > 0 {
             let logical_block = offset / BLOCK_SIZE;
-            if logical_block >= inner.direct_blocks.len() {
-                return if total_read > 0 {
-                    Ok(total_read)
-                } else {
-                    Err(VfsError::Fs)
-                };
-            }
-
-            let block = inner.direct_blocks[logical_block];
-            if block == 0 {
-                return if total_read > 0 {
-                    Ok(total_read)
-                } else {
-                    Err(VfsError::Fs)
-                };
-            }
+            let block = match mapped_block {
+                Some((mapped_logical_block, block)) if mapped_logical_block == logical_block => {
+                    block
+                }
+                _ => match Self::data_block(&inner, logical_block) {
+                    Ok(block) => {
+                        mapped_block = Some((logical_block, block));
+                        block
+                    }
+                    Err(err) => {
+                        return if total_read > 0 {
+                            Ok(total_read)
+                        } else {
+                            Err(err)
+                        };
+                    }
+                },
+            };
 
             let block_offset = offset % BLOCK_SIZE;
             let sector_in_block = block_offset / SECTOR_SIZE;
@@ -324,25 +354,28 @@ impl<BD: BlockDevice + 'static + Send + Sync> VNode for INode<BD> {
         let mut total_written = 0;
         let mut sector_buf = [0; SECTOR_SIZE];
         let mut remaining = core::cmp::min(buf.len(), file_size - offset);
+        let mut mapped_block = None;
 
         while remaining > 0 {
             let logical_block = offset / BLOCK_SIZE;
-            if logical_block >= inner.direct_blocks.len() {
-                return if total_written > 0 {
-                    Ok(total_written)
-                } else {
-                    Err(VfsError::Fs)
-                };
-            }
-
-            let block = inner.direct_blocks[logical_block];
-            if block == 0 {
-                return if total_written > 0 {
-                    Ok(total_written)
-                } else {
-                    Err(VfsError::Fs)
-                };
-            }
+            let block = match mapped_block {
+                Some((mapped_logical_block, block)) if mapped_logical_block == logical_block => {
+                    block
+                }
+                _ => match Self::data_block(&inner, logical_block) {
+                    Ok(block) => {
+                        mapped_block = Some((logical_block, block));
+                        block
+                    }
+                    Err(err) => {
+                        return if total_written > 0 {
+                            Ok(total_written)
+                        } else {
+                            Err(err)
+                        };
+                    }
+                },
+            };
 
             let block_offset = offset % BLOCK_SIZE;
             let sector_in_block = block_offset / SECTOR_SIZE;
@@ -744,5 +777,98 @@ impl<BD: BlockDevice> Vsfs<BD> {
             unsafe { ptr::read_unaligned(buf[inode_offset..].as_ptr() as *const INodeInner) };
 
         Ok(inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+    use std::{sync::Mutex, vec, vec::Vec};
+
+    static DISK: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+    struct MemoryBlockDevice;
+
+    impl BlockDevice for MemoryBlockDevice {
+        fn read_sector(sector: usize, buf: &mut [u8; SECTOR_SIZE]) -> VfsResult<()> {
+            let disk = DISK.lock().unwrap();
+            let start = sector.checked_mul(SECTOR_SIZE).ok_or(VfsError::DeviceIO)?;
+            let end = start.checked_add(SECTOR_SIZE).ok_or(VfsError::DeviceIO)?;
+            let source = disk.get(start..end).ok_or(VfsError::DeviceIO)?;
+            buf.copy_from_slice(source);
+            Ok(())
+        }
+
+        fn write_sector(sector: usize, buf: &[u8; SECTOR_SIZE]) -> VfsResult<()> {
+            let mut disk = DISK.lock().unwrap();
+            let start = sector.checked_mul(SECTOR_SIZE).ok_or(VfsError::DeviceIO)?;
+            let end = start.checked_add(SECTOR_SIZE).ok_or(VfsError::DeviceIO)?;
+            let destination = disk.get_mut(start..end).ok_or(VfsError::DeviceIO)?;
+            destination.copy_from_slice(buf);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn reads_and_writes_across_direct_indirect_boundary() {
+        const DIRECT_DATA_BLOCK: u32 = 1;
+        const INDIRECT_BLOCK: u32 = 2;
+        const INDIRECT_DATA_BLOCK: u32 = 3;
+
+        let mut disk = vec![0; 4 * BLOCK_SIZE];
+        let direct_tail = DIRECT_DATA_BLOCK as usize * BLOCK_SIZE + BLOCK_SIZE - 4;
+        disk[direct_tail..direct_tail + 4].copy_from_slice(b"abcd");
+        let indirect_start = INDIRECT_BLOCK as usize * BLOCK_SIZE;
+        disk[indirect_start..indirect_start + size_of::<u32>()]
+            .copy_from_slice(&INDIRECT_DATA_BLOCK.to_ne_bytes());
+        let indirect_data_start = INDIRECT_DATA_BLOCK as usize * BLOCK_SIZE;
+        disk[indirect_data_start..indirect_data_start + 4].copy_from_slice(b"efgh");
+        *DISK.lock().unwrap() = disk;
+
+        let fs: Arc<Vsfs<MemoryBlockDevice>> = Arc::new(Vsfs {
+            superblock: SuperBlock {
+                magic: MAGIC,
+                nblocks: 4,
+                ninodes: 1,
+                inode_bitmap_block: 0,
+                data_bitmap_block: 0,
+                inode_table_start: 0,
+                inode_table_blocks: 0,
+                data_block_start: 1,
+            },
+            inode_cache: SpinLock::new(BTreeMap::new()),
+            inode_bitmap_lock: SpinLock::new(()),
+            data_bitmap_lock: SpinLock::new(()),
+            _marker: PhantomData,
+        });
+        let mut direct_blocks = [0; DIRECT_BLOCKS];
+        direct_blocks[DIRECT_BLOCKS - 1] = DIRECT_DATA_BLOCK;
+        let inode = INode {
+            inum: 1,
+            fs,
+            inner: Arc::new(RwLock::new(INodeInner {
+                ty: Type::File,
+                link_count: 1,
+                metadata: Metadata {
+                    dev: 0,
+                    sz: ((DIRECT_BLOCKS + 1) * BLOCK_SIZE) as u32,
+                },
+                direct_blocks,
+                indirect_block: INDIRECT_BLOCK,
+            })),
+            _marker: PhantomData,
+        };
+
+        let boundary_offset = DIRECT_BLOCKS * BLOCK_SIZE - 4;
+        let mut read_buf = [0; 8];
+        assert_eq!(inode.read(boundary_offset, &mut read_buf), Ok(8));
+        assert_eq!(&read_buf, b"abcdefgh");
+
+        assert_eq!(inode.write(boundary_offset, b"ABCDEFGH"), Ok(8));
+        let disk = DISK.lock().unwrap();
+        assert_eq!(&disk[direct_tail..direct_tail + 4], b"ABCD");
+        assert_eq!(&disk[indirect_data_start..indirect_data_start + 4], b"EFGH");
     }
 }
