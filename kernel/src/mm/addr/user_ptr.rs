@@ -60,10 +60,10 @@ impl<T> UserPtr<T> {
         }
     }
 
-    pub unsafe fn copy_from_user_many_until(
+    pub unsafe fn copy_from_user_many_until<F: FnMut(*const T) -> bool>(
         &self,
         dest: &mut [T],
-        should_stop: fn(*const T) -> bool,
+        mut should_stop: F,
     ) -> Option<usize> {
         let mut cur_ptr = self.raw();
         for dest_idx in 0..dest.len() {

@@ -10,6 +10,12 @@ pub const SYS_READ: usize = 63;
 //  sys_write(unsigned int fd, const char __user *buf, size_t count);
 pub const SYS_WRITE: usize = 64;
 
+// long sys_writev(unsigned long fd, const struct iovec __user *vec, unsigned
+// long vlen);
+pub const SYS_WRITEV: usize = 66;
+
+pub const SYS_PWRITEV: usize = 70;
+
 // long sys_exit(int error_code);
 pub const SYS_EXIT: usize = 93;
 
