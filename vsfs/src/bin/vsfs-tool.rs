@@ -11,6 +11,9 @@ use serde::Deserialize;
 use vsfs::{DirEnt, INodeInner, Metadata, Type};
 
 const BLOCK_SIZE: usize = 4096;
+const DIRECT_BLOCKS: usize = 12;
+const INDIRECT_BLOCK_ENTRIES: usize = BLOCK_SIZE / std::mem::size_of::<u32>();
+const MAX_DATA_BLOCKS: usize = DIRECT_BLOCKS + INDIRECT_BLOCK_ENTRIES;
 const NBLOCKS: u32 = 64;
 const NINODES: u32 = 80;
 
@@ -53,6 +56,7 @@ enum LayoutKind {
 struct FsNode {
     inum: u32,
     data_blocks: Vec<u32>,
+    indirect_block: u32,
     name: String,
     kind: FsNodeKind,
 }
@@ -430,7 +434,7 @@ fn allocate_node(
             }
 
             let dirent_count = 2 + allocated_children.len();
-            let data_blocks = allocate_data_blocks(
+            let (data_blocks, indirect_block) = allocate_node_blocks(
                 blocks_needed(dirent_count * std::mem::size_of::<DirEnt>()),
                 next_data_block,
             )?;
@@ -438,6 +442,7 @@ fn allocate_node(
             Ok(FsNode {
                 inum,
                 data_blocks,
+                indirect_block,
                 name: node.name,
                 kind: FsNodeKind::Directory {
                     children: allocated_children,
@@ -445,10 +450,12 @@ fn allocate_node(
             })
         }
         LayoutKind::File { data } => {
-            let data_blocks = allocate_data_blocks(blocks_needed(data.len()), next_data_block)?;
+            let (data_blocks, indirect_block) =
+                allocate_node_blocks(blocks_needed(data.len()), next_data_block)?;
             Ok(FsNode {
                 inum,
                 data_blocks,
+                indirect_block,
                 name: node.name,
                 kind: FsNodeKind::File { data },
             })
@@ -464,22 +471,38 @@ fn blocks_needed(bytes: usize) -> usize {
     }
 }
 
-fn allocate_data_blocks(count: usize, next_data_block: &mut u32) -> Result<Vec<u32>, String> {
-    if count > 12 {
-        return Err("files and directories currently support at most 12 data blocks".to_string());
+fn allocate_node_blocks(
+    count: usize,
+    next_data_block: &mut u32,
+) -> Result<(Vec<u32>, u32), String> {
+    if count > MAX_DATA_BLOCKS {
+        return Err(format!(
+            "files and directories support at most {MAX_DATA_BLOCKS} data blocks"
+        ));
     }
 
-    let mut blocks = Vec::with_capacity(count);
-    for _ in 0..count {
-        if *next_data_block >= NBLOCKS {
-            return Err(format!(
-                "too many data blocks; image supports {NBLOCKS} blocks"
-            ));
-        }
-        blocks.push(*next_data_block);
-        *next_data_block += 1;
+    let blocks = allocate_blocks(count, next_data_block)?;
+    let indirect_block = if count > DIRECT_BLOCKS {
+        allocate_blocks(1, next_data_block)?[0]
+    } else {
+        0
+    };
+
+    Ok((blocks, indirect_block))
+}
+
+fn allocate_blocks(count: usize, next_data_block: &mut u32) -> Result<Vec<u32>, String> {
+    let end_block = next_data_block
+        .checked_add(count as u32)
+        .ok_or_else(|| "data block count overflow".to_string())?;
+    if end_block > NBLOCKS {
+        return Err(format!(
+            "too many data blocks; image supports {NBLOCKS} blocks"
+        ));
     }
 
+    let blocks = (*next_data_block..end_block).collect();
+    *next_data_block = end_block;
     Ok(blocks)
 }
 
@@ -554,6 +577,9 @@ fn write_data_bitmap(img: &mut File, root: &FsNode) -> io::Result<()> {
         for block in &node.data_blocks {
             set_bit(&mut bitmap, block - DATA_BLOCK_START);
         }
+        if node.indirect_block != 0 {
+            set_bit(&mut bitmap, node.indirect_block - DATA_BLOCK_START);
+        }
     });
 
     write_at_block(img, DATA_BITMAP_BLOCK, &bitmap)
@@ -575,6 +601,8 @@ fn set_bit(bitmap: &mut [u8], bit: u32) {
 }
 
 fn write_node(img: &mut File, node: &FsNode, parent_inum: u32) -> io::Result<()> {
+    write_indirect_block(img, node)?;
+
     match &node.kind {
         FsNodeKind::Directory { children } => {
             write_dir_inode(img, node, children)?;
@@ -591,8 +619,7 @@ fn write_node(img: &mut File, node: &FsNode, parent_inum: u32) -> io::Result<()>
 }
 
 fn write_dir_inode(img: &mut File, node: &FsNode, children: &[FsNode]) -> io::Result<()> {
-    let mut direct_blocks = [0u32; 12];
-    direct_blocks[..node.data_blocks.len()].copy_from_slice(&node.data_blocks);
+    let direct_blocks = direct_blocks(node);
 
     let inode = INodeInner {
         ty: Type::Directory,
@@ -602,7 +629,7 @@ fn write_dir_inode(img: &mut File, node: &FsNode, children: &[FsNode]) -> io::Re
             dev: 0,
         },
         direct_blocks,
-        indirect_block: 0,
+        indirect_block: node.indirect_block,
     };
 
     write_struct(img, inode_offset(node.inum), &inode)
@@ -638,8 +665,7 @@ fn write_dir_blocks(
 }
 
 fn write_file(img: &mut File, node: &FsNode, data: &[u8]) -> io::Result<()> {
-    let mut direct_blocks = [0u32; 12];
-    direct_blocks[..node.data_blocks.len()].copy_from_slice(&node.data_blocks);
+    let direct_blocks = direct_blocks(node);
 
     let inode = INodeInner {
         ty: Type::File,
@@ -649,7 +675,7 @@ fn write_file(img: &mut File, node: &FsNode, data: &[u8]) -> io::Result<()> {
             sz: data.len() as u32,
         },
         direct_blocks,
-        indirect_block: 0,
+        indirect_block: node.indirect_block,
     };
 
     write_struct(img, inode_offset(node.inum), &inode)?;
@@ -661,6 +687,30 @@ fn write_file(img: &mut File, node: &FsNode, data: &[u8]) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn direct_blocks(node: &FsNode) -> [u32; DIRECT_BLOCKS] {
+    let mut direct_blocks = [0; DIRECT_BLOCKS];
+    let direct_count = node.data_blocks.len().min(DIRECT_BLOCKS);
+    direct_blocks[..direct_count].copy_from_slice(&node.data_blocks[..direct_count]);
+    direct_blocks
+}
+
+fn write_indirect_block(img: &mut File, node: &FsNode) -> io::Result<()> {
+    if node.indirect_block == 0 {
+        return Ok(());
+    }
+
+    let indirect_data_blocks = &node.data_blocks[DIRECT_BLOCKS..];
+    debug_assert!(indirect_data_blocks.len() <= INDIRECT_BLOCK_ENTRIES);
+    let mut block = [0; BLOCK_SIZE];
+    for (index, data_block) in indirect_data_blocks.iter().enumerate() {
+        let offset = index * std::mem::size_of::<u32>();
+        block[offset..offset + std::mem::size_of::<u32>()]
+            .copy_from_slice(&data_block.to_ne_bytes());
+    }
+
+    write_at_block(img, node.indirect_block, &block)
 }
 
 fn dirent(inum: u32, name: &str) -> DirEnt {
