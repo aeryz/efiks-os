@@ -14,7 +14,7 @@ const BLOCK_SIZE: usize = 4096;
 const DIRECT_BLOCKS: usize = 12;
 const INDIRECT_BLOCK_ENTRIES: usize = BLOCK_SIZE / std::mem::size_of::<u32>();
 const MAX_DATA_BLOCKS: usize = DIRECT_BLOCKS + INDIRECT_BLOCK_ENTRIES;
-const NBLOCKS: u32 = 64;
+const NBLOCKS: u32 = 128;
 const NINODES: u32 = 80;
 
 const SUPER_BLOCK: u32 = 0;

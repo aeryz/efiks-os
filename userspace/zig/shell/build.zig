@@ -1,14 +1,14 @@
 const std = @import("std");
 
-const riscv64_freestanding: std.Target.Query = .{
+const riscv64_linux: std.Target.Query = .{
     .cpu_arch = .riscv64,
-    .os_tag = .freestanding,
+    .os_tag = .linux,
     .abi = .none,
 };
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{
-        .default_target = riscv64_freestanding,
+        .default_target = riscv64_linux,
     });
     const optimize = b.standardOptimizeOption(.{});
 
