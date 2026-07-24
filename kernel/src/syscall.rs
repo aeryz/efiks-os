@@ -26,8 +26,8 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
         // Inappropriate ioctl for device
         syscall::SYS_IOCTL => Err(Errno::ENoTty.into()),
         syscall::SYS_OPEN => {
-            let path = UserBuf::new(tf.get_arg::<0>()).ok_or(Error::InvalidArgs)?;
-            let flags = tf.get_arg_as::<1, u32>()?;
+            let path = UserBuf::new(tf.get_arg::<1>()).ok_or(Error::InvalidArgs)?;
+            let flags = tf.get_arg_as::<2, u32>()?;
             syscall_open::sys_open(path, flags).map(|fd| fd as isize)
         }
         syscall::SYS_CLOSE => {
