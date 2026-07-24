@@ -1,7 +1,5 @@
 const std = @import("std");
 
-pub const BrkAllocator = @import("brk_allocator.zig");
-
 const Syscall = enum(usize) { spawn = 6, open = 56, close = 57, read = 63, write = 64, exit = 93, sleep_ms = 101, brk = 214, wait = 260 };
 
 pub inline fn write(buf: []const u8) isize {
