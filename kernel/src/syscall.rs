@@ -274,6 +274,7 @@ mod syscall_iov {
         iov_len: usize,
     }
 
+    #[repr(C)]
     pub struct IoVecIn {
         // TODO(aeryz): this is normally a void*
         iov_base: UserBufMut,
@@ -290,14 +291,26 @@ mod syscall_iov {
         };
         let mut n_read = 0;
 
-        for _ in 0..len {
+        for i in 0..len {
             unsafe {
                 io_vec.copy_from_user(&mut kvec);
             }
 
-            n_read += sys_read(fd, kvec.iov_base, kvec.iov_len)?;
+            let requested = kvec.iov_len;
+            let read = match sys_read(fd, kvec.iov_base, requested) {
+                Ok(read) => read,
+                Err(_) if n_read != 0 => return Ok(n_read),
+                Err(err) => return Err(err),
+            };
+            n_read = n_read.checked_add(read).ok_or(Error::Overflow)?;
 
-            io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+            if read < requested {
+                break;
+            }
+
+            if i + 1 < len {
+                io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+            }
         }
 
         Ok(n_read)
@@ -312,21 +325,28 @@ mod syscall_iov {
             iov_len: 0,
         };
 
-        let mut buf = Vec::new();
         let mut n_written = 0;
 
-        for _ in 0..len {
+        for i in 0..len {
             unsafe {
                 io_vec.copy_from_user(&mut kvec);
             }
 
-            if kvec.iov_len > buf.capacity() {
-                buf.resize(kvec.iov_len, 0);
+            let requested = kvec.iov_len;
+            let written = match sys_write(fd, kvec.iov_base, requested) {
+                Ok(written) => written,
+                Err(_) if n_written != 0 => return Ok(n_written),
+                Err(err) => return Err(err),
+            };
+            n_written = n_written.checked_add(written).ok_or(Error::Overflow)?;
+
+            if written < requested {
+                break;
             }
 
-            n_written += sys_write(fd, kvec.iov_base, kvec.iov_len)?;
-
-            io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+            if i + 1 < len {
+                io_vec = io_vec.offset(1).ok_or(Error::InvalidArgs)?;
+            }
         }
 
         Ok(n_written)
