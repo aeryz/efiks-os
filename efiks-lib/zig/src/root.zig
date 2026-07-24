@@ -107,11 +107,14 @@ pub const WaitResult = struct {
 };
 
 pub fn syscall_wait() WaitResult {
-    var wstatus: u16 = undefined;
+    var wstatus: u32 = undefined;
     const ret = asm volatile ("ecall"
         : [ret] "={x10}" (-> usize),
         : [number] "{x17}" (Syscall.wait),
-          [wstatus] "{x10}" (@intFromPtr(&wstatus)),
+          [pid] "{x10}" (@as(usize, @bitCast(@as(isize, -1)))),
+          [wstatus] "{x11}" (@intFromPtr(&wstatus)),
+          [flags] "{x12}" (@as(usize, 0)),
+          [usage] "{x13}" (@as(usize, 0)),
         : .{ .memory = true });
 
     const pid: isize = @bitCast(ret);
@@ -122,7 +125,7 @@ pub fn syscall_wait() WaitResult {
     };
 }
 
-fn wstatus_to_term(wstatus: ?u16) std.process.Child.Term {
+fn wstatus_to_term(wstatus: ?u32) std.process.Child.Term {
     if (wstatus) |status| {
         if (status & 0xFF == 0) {
             return .{ .exited = @intCast((status >> 8) & 0xFF) };

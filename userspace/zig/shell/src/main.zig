@@ -12,6 +12,7 @@ const ShellError = error{
     InvalidArgs,
     OpenFailed,
     ReadFailed,
+    WaitFailed,
 };
 
 const ArgIterator = std.mem.SplitIterator(u8, .any);
@@ -101,7 +102,25 @@ fn runSpawn(writer: *std.Io.Writer, it: *ArgIterator, allocator: std.mem.Allocat
     if (err < 0) {
         try writer.print("spawn: exited with err {}\n", .{err});
         try writer.flush();
+        return;
     }
+
+    const linux = std.os.linux;
+    var status: u32 = 0;
+    const wait_result = linux.waitpid(@intCast(pid), &status, 0);
+    if (linux.errno(wait_result) != .SUCCESS) {
+        return ShellError.WaitFailed;
+    }
+
+    if (linux.W.IFEXITED(status)) {
+        try writer.print(
+            "child {} finished execution with code {}\n",
+            .{ wait_result, linux.W.EXITSTATUS(status) },
+        );
+    } else {
+        try writer.print("child {} finished with status 0x{x}\n", .{ wait_result, status });
+    }
+    try writer.flush();
 }
 
 fn runCat(_: std.Io, writer: *std.Io.Writer, it: *ArgIterator, allocator: std.mem.Allocator) !void {

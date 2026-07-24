@@ -3,12 +3,12 @@ pub enum WaitStatus {
 }
 
 #[repr(C)]
-pub struct RawWaitStatus(u16);
+pub struct RawWaitStatus(u32);
 
 impl From<WaitStatus> for RawWaitStatus {
     fn from(value: WaitStatus) -> Self {
         let encoded = match value {
-            WaitStatus::Exited(e) => (e as u16) << 8,
+            WaitStatus::Exited(e) => u32::from(e as u8) << 8,
         };
 
         Self(encoded)

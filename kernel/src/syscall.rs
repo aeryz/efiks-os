@@ -84,8 +84,10 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             sys_brk(brk).map(|n| n as isize)
         }
         syscall::SYS_WAIT => {
-            let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<0>());
-            sys_wait(out_wstatus).map(|p| p.raw() as isize)
+            let pid = tf.get_arg_as::<0, isize>()?;
+            let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<1>());
+            let flags = tf.get_arg_as::<2, u32>()?;
+            sys_wait(pid, out_wstatus, flags).map(|p| p.raw() as isize)
         }
         syscall::SYS_SPAWN => {
             let out_pid = UserPtr::<task::Pid>::new(tf.get_arg::<0>());
@@ -378,7 +380,11 @@ fn sys_brk(brk: usize) -> Result<usize, Error> {
 ///     struct rusage __user *ru
 /// );
 /// ```
-fn sys_wait(out_wstatus: UserPtr<RawWaitStatus>) -> Result<task::Pid, Error> {
+fn sys_wait(
+    _pid: isize,
+    out_wstatus: UserPtr<RawWaitStatus>,
+    _flags: u32,
+) -> Result<task::Pid, Error> {
     let task = &sched::load_core_ctx().current_task;
     // TODO(aeryz): we should get the exit code of the child?
     let (pid, exit_code) = task::wait(task)?;
