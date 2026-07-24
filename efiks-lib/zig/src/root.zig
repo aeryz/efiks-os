@@ -88,7 +88,7 @@ pub fn syscall_exit(exit_code: i32) noreturn {
 
 pub fn syscall_spawn(
     pid: *usize,
-    path: [*]u8,
+    path: [*]const u8,
     argv: [*:null]const ?[*:0]const u8,
 ) isize {
     const ret = asm volatile ("ecall"
