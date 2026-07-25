@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Syscall = enum(usize) { spawn = 6, close = 57, read = 63, write = 64, exit = 93, sleep_ms = 101, brk = 214, wait = 260 };
+const Syscall = enum(usize) { shutdown = 5, spawn = 6, close = 57, read = 63, write = 64, exit = 93, sleep_ms = 101, brk = 214, wait = 260 };
 
 pub inline fn write(buf: []const u8) isize {
     return syscall_write(buf.ptr, buf.len);

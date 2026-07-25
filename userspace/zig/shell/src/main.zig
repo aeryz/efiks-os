@@ -196,6 +196,15 @@ fn readLine(reader: *std.Io.Reader, writer: *std.Io.Writer, buffer: []u8) !?[]co
                 return buffer[0..0];
             },
 
+            // Ctrl-D
+            0x04 => {
+                try writer.writeAll("^D\r\n");
+                try writer.flush();
+
+                efiks.syscall_shutdown();
+                return buffer[0..0];
+            },
+
             else => {
                 if (byte < 0x20)
                     continue;

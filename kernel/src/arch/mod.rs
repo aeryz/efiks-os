@@ -65,7 +65,7 @@ pub trait Architecture {
         nanos * Self::CPU_HERTZ / 1_000_000_000
     }
 
-    fn halt();
+    fn halt() -> !;
 
     /// Boots the core `core_id` and jumps to `core_boot_entry` by only giving
     /// the `core_id` as the parameter to it.
