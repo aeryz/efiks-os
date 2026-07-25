@@ -3,7 +3,7 @@ mod frame_allocator;
 mod kernel_allocator;
 mod kvm;
 mod mappings;
-mod page;
+pub mod page;
 
 use core::ptr;
 
@@ -23,7 +23,6 @@ use crate::{
 
 pub const PAGE_SIZE: usize = 4096;
 const KERNEL_STACK_PAGES: usize = 16;
-const KERNEL_STACK_RESERVED_BYTES: usize = 0x60;
 
 #[allow(unused)]
 #[derive(Clone)]
@@ -40,15 +39,15 @@ pub struct VmRegion {
 #[derive(Copy, Clone)]
 pub struct KernelStackRegion {
     pub guard: PhysAddr,
-    pub start: VirtAddr,
-    pub end: VirtAddr,
+    pub bottom: VirtAddr,
+    pub top: VirtAddr,
 }
 
 impl KernelStackRegion {
     pub const EMPTY: Self = Self {
         guard: PhysAddr::ZERO,
-        start: VirtAddr::ZERO,
-        end: VirtAddr::ZERO,
+        bottom: VirtAddr::ZERO,
+        top: VirtAddr::ZERO,
     };
 }
 
@@ -90,9 +89,21 @@ impl MemoryManager {
         self_
     }
 
-    // TODO(aeryz): I don't like returning the stack start here like this
-    pub fn fork(&self) -> Result<(Self, VirtAddr), Error> {
-        unimplemented!()
+    pub fn fork(&self) -> Result<Self, Error> {
+        let root_pt = MemoryModelOf::<Arch>::fork(self.root_pt);
+        Arch::flush_tlb();
+
+        let mm = Self {
+            root_pt,
+            regions: SpinLock::new(self.regions.lock().clone()),
+            kernel_stack: SpinLock::new(KernelStackRegion::EMPTY),
+            start_brk: self.start_brk,
+            brk: SpinLock::new(*self.brk.lock()),
+        };
+
+        let _ = mm.create_kernel_stack()?;
+
+        Ok(mm)
     }
 
     pub fn brk(&self, new_brk: VirtAddr) -> Result<VirtAddr, Error> {
@@ -156,14 +167,12 @@ impl MemoryManager {
         let stack_end_va = stack_start_va
             .offset_by(stack_size as isize)
             .ok_or(Error::Overflow)?;
-        let kernel_stack_top = kernel_stack_start
-            .offset_by((stack_size - KERNEL_STACK_RESERVED_BYTES) as isize)
-            .unwrap();
+        let kernel_stack_top = kernel_stack_start.offset_by((stack_size) as isize).unwrap();
 
         *self.kernel_stack.lock() = KernelStackRegion {
             guard,
-            start: stack_start_va,
-            end: stack_end_va,
+            bottom: stack_start_va,
+            top: stack_end_va,
         };
 
         Ok(kernel_stack_top)
@@ -188,7 +197,7 @@ impl MemoryManager {
             flags,
         )?;
 
-        page::add(pa)?;
+        page::add(pa);
 
         Ok(pa)
     }
@@ -225,7 +234,7 @@ impl MemoryManager {
         let pa = alloc_frame().unwrap();
         zero_frame(pa);
         MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), addr.into(), pa.into(), flags);
-        page::add(pa)?;
+        page::add(pa);
         Arch::flush_tlb();
 
         Ok(())
@@ -322,8 +331,8 @@ impl MemoryManager {
 
         free_frame(stack.guard);
 
-        let mut va = stack.start;
-        while va < stack.end {
+        let mut va = stack.bottom;
+        while va < stack.top {
             free_frame(PhysAddr::new(virt_to_phys(va.raw())));
             va = va.offset_by(PAGE_SIZE as isize).unwrap();
         }

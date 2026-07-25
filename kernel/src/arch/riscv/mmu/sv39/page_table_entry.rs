@@ -58,6 +58,17 @@ impl PageTableEntry {
         Self(0)
     }
 
+    #[must_use]
+    pub const fn is_writable(&self) -> bool {
+        self.0 & PteFlags::W.bits() != 0
+    }
+
+    #[must_use]
+    pub const fn is_user(&self) -> bool {
+        self.0 & PteFlags::U.bits() != 0
+    }
+
+    #[must_use]
     pub const fn physical_address(&self) -> PhysicalAddress {
         unsafe { PhysicalAddress::from_raw_unchecked((self.0 & Self::MASK_PPN) << 2) }
     }
@@ -73,8 +84,14 @@ impl PageTableEntry {
     }
 
     #[must_use]
-    pub const fn set_flags(mut self, flag: PteFlags) -> Self {
-        self.0 |= flag.bits();
+    pub const fn set_flags(mut self, flags: PteFlags) -> Self {
+        self.0 |= flags.bits();
+        self
+    }
+
+    #[must_use]
+    pub const fn unset_flags(mut self, flags: PteFlags) -> Self {
+        self.0 &= !flags.bits();
         self
     }
 

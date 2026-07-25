@@ -245,6 +245,10 @@ impl MemoryModel for Riscv {
         PageTable::traverse_free(root_pt);
     }
 
+    fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr {
+        PageTable::fork(root_pt)
+    }
+
     fn initialize_empty_pt(root_pt: Self::VirtualAddress) {
         unsafe {
             *(root_pt.as_ptr_mut()) = PageTable::empty();

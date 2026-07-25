@@ -8,7 +8,11 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
-use crate::{error::Error, mm::VirtAddr, task::Task};
+use crate::{
+    error::Error,
+    mm::{self, VirtAddr},
+    task::Task,
+};
 
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {
@@ -156,6 +160,8 @@ pub trait MemoryModel {
     ) -> Option<Self::PhysicalAddress>;
 
     fn traverse_free(root_pt: Self::PhysicalAddress);
+
+    fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr;
 }
 
 pub trait TrapFrame {
