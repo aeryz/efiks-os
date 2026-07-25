@@ -3,6 +3,7 @@ mod frame_allocator;
 mod kernel_allocator;
 mod kvm;
 mod mappings;
+mod page;
 
 use core::ptr;
 
@@ -182,6 +183,8 @@ impl MemoryManager {
             flags,
         )?;
 
+        page::add(pa)?;
+
         Ok(pa)
     }
 
@@ -217,6 +220,7 @@ impl MemoryManager {
         let pa = alloc_frame().unwrap();
         zero_frame(pa);
         MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), addr.into(), pa.into(), flags);
+        page::add(pa)?;
         Arch::flush_tlb();
 
         Ok(())
@@ -277,7 +281,10 @@ impl MemoryManager {
             }
 
             if let Some(pa) = self.translate(r.start) {
-                free_frame(pa);
+                let refcount = page::remove(pa).expect("this should always exist");
+                if refcount == 0 {
+                    free_frame(pa);
+                }
             }
         }
         drop(regions);

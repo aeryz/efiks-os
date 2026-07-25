@@ -9,6 +9,7 @@ pub enum Error {
     InvalidArgs,
     Unmapped,
     NoSys,
+    AlreadyExists,
     Errno(Errno),
     Other(&'static dyn IntoError),
 }
@@ -29,6 +30,7 @@ impl From<Error> for Errno {
             Error::InvalidArgs => Self::EInval,
             Error::Unmapped => Self::EFault,
             Error::NoSys => Self::ENoSys,
+            Error::AlreadyExists => Self::EExist,
             Error::Errno(errno) => errno,
             Error::Other(err) => err.to_errno(),
         }
