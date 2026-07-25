@@ -84,32 +84,35 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
     }))
 }
 
-pub fn fork() -> Result<(), Error> {
-    let task = sched::load_core_ctx().current_task.clone();
+pub fn fork() -> Result<Pid, Error> {
+    let task = &sched::load_core_ctx().current_task;
 
-    let (mm_, kernel_stack) = task.mm.fork()?;
+    let mm_ = task.mm.fork()?;
 
-    let trap_frame = KernelPtr::new(VirtAddr::new(
-        kernel_stack.raw() - size_of::<TrapFrameOf<Arch>>(),
-    ))?;
+    let kernel_stack = mm_.kernel_stack.lock();
+    let kernel_stack_top = kernel_stack.top;
 
-    // TODO(aeryz): which fields do we need to change in this trap frame?
+    let trap_frame_addr = VirtAddr::new(kernel_stack_top.raw() - size_of::<TrapFrameOf<Arch>>());
+    let trap_frame = KernelPtr::new(trap_frame_addr)?;
+
     unsafe {
         core::ptr::copy_nonoverlapping(task.trap_frame.as_ptr(), trap_frame.as_ptr_mut(), 1);
+        (*trap_frame.as_ptr_mut()).set_syscall_return_value(0);
     }
 
-    let kernel_sp = VirtAddr::new(kernel_stack.raw() - size_of::<TrapFrameOf<Arch>>());
-    let context = task.context.clone();
+    let context = ContextOf::<Arch>::initialize(Arch::trap_resume_ptr().into(), trap_frame_addr);
 
     let pid = Pid::create_next();
 
     task.runtime.lock().children.push(pid);
 
+    drop(kernel_stack);
+
     let task = task::add_task(Task {
         thread_info: ThreadInfo {
-            user_sp: (),
-            kernel_sp: (),
-            per_cpu_ctx: (),
+            user_sp: task.thread_info.user_sp,
+            kernel_sp: kernel_stack_top.raw(),
+            per_cpu_ctx: UnsafeCell::new(core::ptr::null_mut()),
         },
         pid,
         trap_frame,
@@ -125,7 +128,9 @@ pub fn fork() -> Result<(), Error> {
         }),
     });
 
-    Ok(())
+    sched::enqueue_new_task(&task);
+
+    Ok(pid)
 }
 
 // TODO(aeryz): I think we should use a CStr instead since argv here doesn't
@@ -138,17 +143,17 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     let user_sp = mm_.create_user_stack()?;
     let user_sp = create_initial_stack(&mm_, user_sp, argv)?;
 
-    let kernel_stack = mm::phys_to_virt(mm_.create_kernel_stack()?.raw());
+    let kernel_stack_top = VirtAddr::new(mm::phys_to_virt(mm_.create_kernel_stack()?.raw()));
 
-    let trap_frame = KernelPtr::new(VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>()))?;
+    let trap_frame_addr = VirtAddr::new(kernel_stack_top.raw() - size_of::<TrapFrameOf<Arch>>());
+    let trap_frame = KernelPtr::new(trap_frame_addr)?;
 
     unsafe {
         *(trap_frame.as_ptr_mut()) =
             TrapFrameOf::<Arch>::initialize(entry_va, user_sp, VirtAddr::new(0xcafebabe));
     }
 
-    let kernel_sp = VirtAddr::new(kernel_stack - size_of::<TrapFrameOf<Arch>>());
-    let context = ContextOf::<Arch>::initialize(Arch::trap_resume_ptr().into(), kernel_sp);
+    let context = ContextOf::<Arch>::initialize(Arch::trap_resume_ptr().into(), trap_frame_addr);
 
     let pid = Pid::create_next();
 
@@ -160,7 +165,7 @@ pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<
     let task = task::add_task(Task {
         thread_info: ThreadInfo {
             user_sp: user_sp.raw(),
-            kernel_sp: kernel_sp.raw(),
+            kernel_sp: kernel_stack_top.raw(),
             per_cpu_ctx: UnsafeCell::new(core::ptr::null_mut()),
         },
         pid,

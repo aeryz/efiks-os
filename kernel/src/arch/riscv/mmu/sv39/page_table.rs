@@ -158,28 +158,41 @@ impl PageTable {
         mm::free_frame(root_pt.into());
     }
 
-    fn traverse_mut(&mut self, base: usize, cb: fn(leaf_pt: *mut PageTable)) {
-        self.recursive_traverse_mut(base, 3, cb);
-    }
+    pub fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr {
+        let root_ptr = mm::phys_to_virt(root_pt.raw()) as *mut PageTable;
 
-    fn recursive_traverse_mut(
-        &mut self,
-        base: usize,
-        depth: usize,
-        cb: fn(leaf_pt: *mut PageTable),
-    ) {
-        for pte in &mut self.0 {
-            if !pte.is_valid() || pte.is_leaf() {
+        let copy_pa = mm::alloc_frame().expect("NoMem");
+        let copy_ptr = mm::phys_to_virt(copy_pa.raw()) as *mut PageTable;
+        unsafe {
+            core::ptr::copy_nonoverlapping(root_ptr.cast_const(), copy_ptr, 1);
+        }
+
+        let root = unsafe { root_ptr.as_mut().unwrap() };
+        let copy = unsafe { copy_ptr.as_mut().unwrap() };
+        for (parent_pte, child_pte) in root.0.iter_mut().zip(copy.0.iter_mut()) {
+            if !parent_pte.is_valid() {
                 continue;
             }
 
-            let pt = (pte.physical_address().raw() + base) as *mut PageTable;
-            unsafe {
-                pt.as_mut()
-                    .unwrap()
-                    .recursive_traverse_mut(base, depth - 1, cb);
+            if parent_pte.is_leaf() {
+                if parent_pte.is_user() {
+                    mm::page::add(parent_pte.physical_address().into());
+
+                    if parent_pte.is_writable() {
+                        *parent_pte = parent_pte.unset_flags(PteFlags::W);
+                        *child_pte = child_pte.unset_flags(PteFlags::W);
+                    }
+                }
+                continue;
             }
+
+            // child page table
+            let child = parent_pte.physical_address();
+            let pa = Self::fork(child.into());
+            *child_pte = child_pte.set_physical_address(pa.into());
         }
+
+        copy_pa
     }
 
     fn map_memory_with_base(
