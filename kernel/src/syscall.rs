@@ -83,6 +83,20 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             let brk = tf.get_arg::<0>() as usize;
             sys_brk(brk).map(|n| n as isize)
         }
+        syscall::SYS_CLONE => {
+            const SIGCHLD: usize = 17;
+
+            let clone_flags = tf.get_arg::<0>();
+            let newsp = tf.get_arg::<1>();
+
+            // TODO(aeryz): Support the full five-argument clone ABI. This only
+            // implements clone(SIGCHLD, 0), which Zig uses to implement fork.
+            if clone_flags != SIGCHLD || newsp != 0 {
+                return Err(Error::InvalidArgs);
+            }
+
+            task::fork().map(|pid| pid.raw() as isize)
+        }
         syscall::SYS_WAIT => {
             let pid = tf.get_arg_as::<0, isize>()?;
             let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<1>());

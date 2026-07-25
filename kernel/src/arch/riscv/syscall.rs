@@ -12,6 +12,9 @@ pub const SYS_EXIT: usize = 93;
 pub const SYS_SLEEP_MS: usize = 101;
 pub const SYS_GETTID: usize = 178;
 pub const SYS_BRK: usize = 214;
+/// `asmlinkage long sys_clone(unsigned long, unsigned long, int __user *,
+/// unsigned long, int __user *);`
+pub const SYS_CLONE: usize = 220;
 pub const SYS_WAIT: usize = 260;
 // TODO(aeryz): temporary until we have `reboot`
 pub const SYS_SHUTDOWN: usize = 5;

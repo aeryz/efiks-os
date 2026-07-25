@@ -101,45 +101,53 @@ impl PageTable {
     }
 
     pub fn translate(&self, va: VirtualAddress) -> Option<PhysicalAddress> {
-        let l2_entry = self.0.get(va.vpn_2())?;
-        if !l2_entry.is_valid() {
-            return None;
-        }
-        if l2_entry.is_leaf() {
-            return Some(unsafe {
-                PhysicalAddress::from_raw_unchecked(
-                    l2_entry.physical_address().raw() + (va.raw() & (PageSize::Size1G.bytes() - 1)),
-                )
-            });
+        let (pte, page_size) = self.translate_to_pte(va)?;
+        Some(Self::translated_physical_address(pte, page_size, va))
+    }
+
+    fn translate_to_pte(&self, va: VirtualAddress) -> Option<(&PageTableEntry, PageSize)> {
+        let (pte, page_size) = Self::translate_to_pte_ptr(self, va)?;
+        Some((unsafe { pte.as_ref().unwrap() }, page_size))
+    }
+
+    pub fn translate_mut(&mut self, va: VirtualAddress) -> Option<(&mut PageTableEntry, PageSize)> {
+        let (pte, page_size) = Self::translate_to_pte_ptr(self, va)?;
+        Some((unsafe { pte.cast_mut().as_mut().unwrap() }, page_size))
+    }
+
+    fn translate_to_pte_ptr(
+        root: *const PageTable,
+        va: VirtualAddress,
+    ) -> Option<(*const PageTableEntry, PageSize)> {
+        let indices = [va.vpn_2(), va.vpn_1(), va.vpn_0()];
+        let page_sizes = [PageSize::Size1G, PageSize::Size2M, PageSize::Size4K];
+        let mut page_table = root;
+
+        for (index, page_size) in indices.into_iter().zip(page_sizes) {
+            let pte = unsafe { (*page_table).0.get(index)? };
+            if !pte.is_valid() {
+                return None;
+            }
+            if pte.is_leaf() {
+                return Some((pte, page_size));
+            }
+
+            page_table = (pte.physical_address().raw() + KERNEL_DIRECT_MAPPING_BASE.raw())
+                as *const PageTable;
         }
 
-        let l1_pt = (l2_entry.physical_address().raw() + KERNEL_DIRECT_MAPPING_BASE.raw())
-            as *const PageTable;
+        None
+    }
 
-        let l1_entry = unsafe { (*l1_pt).0.get_unchecked(va.vpn_1()) };
-        if !l1_entry.is_valid() {
-            return None;
-        }
-        if l1_entry.is_leaf() {
-            return Some(unsafe {
-                PhysicalAddress::from_raw_unchecked(
-                    l1_entry.physical_address().raw() + (va.raw() & (PageSize::Size2M.bytes() - 1)),
-                )
-            });
-        }
-
-        let l0_pt = (l1_entry.physical_address().raw() + KERNEL_DIRECT_MAPPING_BASE.raw())
-            as *const PageTable;
-
-        let l0_entry = unsafe { (*l0_pt).0.get_unchecked(va.vpn_0()) };
-        if l0_entry.is_valid() && l0_entry.is_leaf() {
-            Some(unsafe {
-                PhysicalAddress::from_raw_unchecked(
-                    l0_entry.physical_address().raw() + (va.raw() & (PageSize::Size4K.bytes() - 1)),
-                )
-            })
-        } else {
-            None
+    fn translated_physical_address(
+        pte: &PageTableEntry,
+        page_size: PageSize,
+        va: VirtualAddress,
+    ) -> PhysicalAddress {
+        unsafe {
+            PhysicalAddress::from_raw_unchecked(
+                pte.physical_address().raw() + (va.raw() & (page_size.bytes() - 1)),
+            )
         }
     }
 
@@ -158,7 +166,7 @@ impl PageTable {
         mm::free_frame(root_pt.into());
     }
 
-    pub fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr {
+    pub fn fork(root_pt: PhysicalAddress) -> PhysicalAddress {
         let root_ptr = mm::phys_to_virt(root_pt.raw()) as *mut PageTable;
 
         let copy_pa = mm::alloc_frame().expect("NoMem");
@@ -192,7 +200,48 @@ impl PageTable {
             *child_pte = child_pte.set_physical_address(pa.into());
         }
 
-        copy_pa
+        copy_pa.into()
+    }
+
+    pub fn copy_on_write(root_pt: PhysicalAddress, addr: VirtualAddress) {
+        let root_pt = unsafe {
+            // TODO(aeryz): we don't wanna panic here
+            (mm::phys_to_virt(root_pt.raw()) as *mut PageTable)
+                .as_mut()
+                .expect("root_pt is valid")
+        };
+
+        let (pte, page_size) = root_pt
+            .translate_mut(addr)
+            .expect("we shouldn't go into path when the page does not exist");
+
+        if page_size != PageSize::Size4K {
+            panic!(
+                "Our kernel cannot handle CoW on pages larger than 4k as of now because the author is lazy."
+            );
+        }
+
+        // NOTE: This only works because we explicitly don't support page sizes other
+        // than 4k.
+        let old_pa = pte.physical_address();
+        let new_pa = mm::alloc_frame().expect("NoMem");
+
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                mm::phys_to_virt(old_pa.raw()) as *const u8,
+                mm::phys_to_virt(new_pa.raw()) as *mut u8,
+                page_size.bytes(),
+            );
+        }
+
+        mm::page::add(new_pa);
+        *pte = pte
+            .set_physical_address(new_pa.into())
+            .set_flags(PteFlags::W);
+
+        if mm::page::remove(old_pa.into()).expect("mapped user pages have metadata") == 0 {
+            mm::free_frame(old_pa.into());
+        }
     }
 
     fn map_memory_with_base(

@@ -228,14 +228,30 @@ impl MemoryManager {
         drop(regions);
 
         if self.translate(addr).is_some() {
-            return Err(Error::Unmapped);
+            // if the page exists, we supposedly have write permission but we still faulted
+            // on write, then this is surely a result of CoW.
+            if access_flags.contains(PteFlags::W) {
+                MemoryModelOf::<Arch>::copy_on_write(self.root_pt, addr);
+                Arch::flush_tlb();
+            } else {
+                log::error!(
+                    "We have the correct permission and the page exists, but still, getting a page fault. This should never happen unless we have a bug. Good luck!"
+                );
+                // this must never be the case?
+                return Err(Error::Unmapped);
+            }
+        } else {
+            let pa = alloc_frame().unwrap();
+            zero_frame(pa);
+            MemoryModelOf::<Arch>::map_vm(
+                self.root_pt_virt().into(),
+                addr.into(),
+                pa.into(),
+                flags,
+            );
+            page::add(pa);
+            Arch::flush_tlb();
         }
-
-        let pa = alloc_frame().unwrap();
-        zero_frame(pa);
-        MemoryModelOf::<Arch>::map_vm(self.root_pt_virt().into(), addr.into(), pa.into(), flags);
-        page::add(pa);
-        Arch::flush_tlb();
 
         Ok(())
     }
