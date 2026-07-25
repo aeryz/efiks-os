@@ -18,7 +18,7 @@ pub trait Architecture {
 
     type MemoryModel: MemoryModel;
 
-    type Context: Context;
+    type Context: Context + Clone;
 
     #[inline(always)]
     fn bump_sp(sp: usize);

@@ -90,6 +90,11 @@ impl MemoryManager {
         self_
     }
 
+    // TODO(aeryz): I don't like returning the stack start here like this
+    pub fn fork(&self) -> Result<(Self, VirtAddr), Error> {
+        unimplemented!()
+    }
+
     pub fn brk(&self, new_brk: VirtAddr) -> Result<VirtAddr, Error> {
         let mut brk = self.brk.lock();
         if self.start_brk >= new_brk {

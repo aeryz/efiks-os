@@ -6,6 +6,7 @@ use vfs::File;
 
 use crate::console::Console;
 
+#[derive(Clone)]
 pub struct FileTable(Vec<Option<FileRef>>);
 
 impl FileTable {
