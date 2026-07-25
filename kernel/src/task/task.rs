@@ -84,6 +84,50 @@ pub fn create_kernel_task(entry: VirtAddr) -> Result<Arc<Task>, Error> {
     }))
 }
 
+pub fn fork() -> Result<(), Error> {
+    let task = sched::load_core_ctx().current_task.clone();
+
+    let (mm_, kernel_stack) = task.mm.fork()?;
+
+    let trap_frame = KernelPtr::new(VirtAddr::new(
+        kernel_stack.raw() - size_of::<TrapFrameOf<Arch>>(),
+    ))?;
+
+    // TODO(aeryz): which fields do we need to change in this trap frame?
+    unsafe {
+        core::ptr::copy_nonoverlapping(task.trap_frame.as_ptr(), trap_frame.as_ptr_mut(), 1);
+    }
+
+    let kernel_sp = VirtAddr::new(kernel_stack.raw() - size_of::<TrapFrameOf<Arch>>());
+    let context = task.context.clone();
+
+    let pid = Pid::create_next();
+
+    task.runtime.lock().children.push(pid);
+
+    let task = task::add_task(Task {
+        thread_info: ThreadInfo {
+            user_sp: (),
+            kernel_sp: (),
+            per_cpu_ctx: (),
+        },
+        pid,
+        trap_frame,
+        context,
+        state: TaskState::Ready.into(),
+        mm: mm_,
+        file_table: SpinLock::new(task.file_table.lock().clone()),
+        runtime: SpinLock::new(TaskRuntime {
+            parent: Some(task.pid),
+            children: Vec::new(),
+            exit_code: -1,
+            wake_up_at: 0,
+        }),
+    });
+
+    Ok(())
+}
+
 // TODO(aeryz): I think we should use a CStr instead since argv here doesn't
 // tell you its supposed to be null-terminated right away.
 pub fn spawn(path: &[u8], argv: &[&[u8]], parent: Option<&Arc<Task>>) -> Result<Pid, Error> {
@@ -185,8 +229,7 @@ pub fn wait(task: &Arc<Task>) -> Result<(Pid, i8), error::Error> {
         task.state.set(TaskState::Running);
     }
 
-    let ret = ret
-        .expect("the parent process should not be scheduled until a child exits");
+    let ret = ret.expect("the parent process should not be scheduled until a child exits");
 
     Ok(ret)
 }
