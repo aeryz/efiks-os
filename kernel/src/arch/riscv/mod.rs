@@ -265,11 +265,11 @@ impl MemoryModel for Riscv {
         root_pt.map_vm_early(va, pa, flags);
     }
 
-    fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr {
-        PageTable::fork(root_pt.into()).into()
+    fn fork(root_pt: Self::PhysicalAddress) -> Self::PhysicalAddress {
+        PageTable::fork(root_pt)
     }
 
-    fn copy_on_write(root_pt: mm::PhysAddr, addr: mm::VirtAddr) {
-        PageTable::copy_on_write(root_pt.into(), addr.into())
+    fn copy_on_write(root_pt: Self::PhysicalAddress, addr: Self::VirtualAddress) {
+        PageTable::copy_on_write(root_pt, addr)
     }
 }

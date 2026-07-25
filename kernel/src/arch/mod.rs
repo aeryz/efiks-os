@@ -8,11 +8,7 @@ use core::ptr::NonNull;
 #[cfg(feature = "riscv-sbi")]
 pub use riscv::*;
 
-use crate::{
-    error::Error,
-    mm::{self, VirtAddr},
-    task::Task,
-};
+use crate::{error::Error, mm::VirtAddr, task::Task};
 
 /// Defines all the architecture-dependent functionality.
 pub trait Architecture {
@@ -22,7 +18,7 @@ pub trait Architecture {
 
     type MemoryModel: MemoryModel;
 
-    type Context: Context + Clone;
+    type Context: Context;
 
     #[inline(always)]
     fn bump_sp(sp: usize);
@@ -161,9 +157,9 @@ pub trait MemoryModel {
 
     fn traverse_free(root_pt: Self::PhysicalAddress);
 
-    fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr;
+    fn fork(root_pt: Self::PhysicalAddress) -> Self::PhysicalAddress;
 
-    fn copy_on_write(root_pt: mm::PhysAddr, addr: mm::VirtAddr);
+    fn copy_on_write(root_pt: Self::PhysicalAddress, addr: Self::VirtualAddress);
 }
 
 pub trait TrapFrame {

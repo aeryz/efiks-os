@@ -90,7 +90,7 @@ impl MemoryManager {
     }
 
     pub fn fork(&self) -> Result<Self, Error> {
-        let root_pt = MemoryModelOf::<Arch>::fork(self.root_pt);
+        let root_pt = MemoryModelOf::<Arch>::fork(self.root_pt.into()).into();
         Arch::flush_tlb();
 
         let mm = Self {
@@ -231,7 +231,7 @@ impl MemoryManager {
             // if the page exists, we supposedly have write permission but we still faulted
             // on write, then this is surely a result of CoW.
             if access_flags.contains(PteFlags::W) {
-                MemoryModelOf::<Arch>::copy_on_write(self.root_pt, addr);
+                MemoryModelOf::<Arch>::copy_on_write(self.root_pt.into(), addr.into());
                 Arch::flush_tlb();
             } else {
                 log::error!(
