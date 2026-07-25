@@ -108,8 +108,11 @@ impl Architecture for Riscv {
         }
     }
 
-    fn halt() {
-        riscv::sbi::shutdown();
+    fn halt() -> ! {
+        loop {
+            core::hint::spin_loop();
+            riscv::sbi::shutdown();
+        }
     }
 
     fn boot_core(core_id: usize) {

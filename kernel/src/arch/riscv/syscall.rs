@@ -13,5 +13,7 @@ pub const SYS_SLEEP_MS: usize = 101;
 pub const SYS_GETTID: usize = 178;
 pub const SYS_BRK: usize = 214;
 pub const SYS_WAIT: usize = 260;
-// TODO(aeryz): temporary until we have fork
+// TODO(aeryz): temporary until we have `reboot`
+pub const SYS_SHUTDOWN: usize = 5;
+// TODO(aeryz): temporary until we have `fork`
 pub const SYS_SPAWN: usize = 6;

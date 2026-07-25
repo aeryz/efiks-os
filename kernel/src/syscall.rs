@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use crate::{
     Arch,
-    arch::{TrapFrame, TrapFrameOf, syscall},
+    arch::{Architecture, TrapFrame, TrapFrameOf, syscall},
     error::Error,
     mm::{UserBuf, UserBufMut, UserPtr, VirtAddr},
     sched,
@@ -88,6 +88,9 @@ fn do_dispatch_syscall(syscall_number: usize, tf: &mut TrapFrameOf<Arch>) -> Res
             let out_wstatus = UserPtr::<RawWaitStatus>::new(tf.get_arg::<1>());
             let flags = tf.get_arg_as::<2, u32>()?;
             sys_wait(pid, out_wstatus, flags).map(|p| p.raw() as isize)
+        }
+        syscall::SYS_SHUTDOWN => {
+            Arch::halt();
         }
         syscall::SYS_SPAWN => {
             let out_pid = UserPtr::<task::Pid>::new(tf.get_arg::<0>());
