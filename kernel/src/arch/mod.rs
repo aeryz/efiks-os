@@ -162,6 +162,8 @@ pub trait MemoryModel {
     fn traverse_free(root_pt: Self::PhysicalAddress);
 
     fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr;
+
+    fn copy_on_write(root_pt: mm::PhysAddr, addr: mm::VirtAddr);
 }
 
 pub trait TrapFrame {

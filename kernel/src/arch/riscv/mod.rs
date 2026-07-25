@@ -248,10 +248,6 @@ impl MemoryModel for Riscv {
         PageTable::traverse_free(root_pt);
     }
 
-    fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr {
-        PageTable::fork(root_pt)
-    }
-
     fn initialize_empty_pt(root_pt: Self::VirtualAddress) {
         unsafe {
             *(root_pt.as_ptr_mut()) = PageTable::empty();
@@ -267,5 +263,13 @@ impl MemoryModel for Riscv {
         let root_pt = unsafe { root_pt.as_ptr_mut::<PageTable>().as_mut().unwrap() };
 
         root_pt.map_vm_early(va, pa, flags);
+    }
+
+    fn fork(root_pt: mm::PhysAddr) -> mm::PhysAddr {
+        PageTable::fork(root_pt.into()).into()
+    }
+
+    fn copy_on_write(root_pt: mm::PhysAddr, addr: mm::VirtAddr) {
+        PageTable::copy_on_write(root_pt.into(), addr.into())
     }
 }
