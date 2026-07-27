@@ -57,15 +57,13 @@ nix develop
 nix build .#opensbi
 ```
 
-### Create a file image based on a subdirectory you have
+### Build the userspace programs and disk image
 ```
-cargo run
-  -p vsfs \
-  --features host-tool \
-  --bin tool \
-  --target x86_64-unknown-linux-gnu \
-  -- --root SUBDIR --output vsfs.img
+./scripts/build-disk.sh
 ```
+
+This rebuilds the Zig shell and `spawned_prog`, installs both under `/foo` in
+the filesystem staging tree, and writes the resulting image to `disk.img`.
 
 ### Run the OS
 ```
@@ -76,7 +74,7 @@ RUST_LOG=info cargo b -p kernel \
     -machine virt \
     -bios ./result/share/opensbi/lp64/generic/firmware/fw_dynamic.bin \
     -kernel target/riscv64gc-unknown-none-elf/debug/kernel \
-    -drive file=vsfs.img,format=raw,if=none,id=blk0,cache=none \
+    -drive file=disk.img,format=raw,if=none,id=blk0,cache=none \
     -device virtio-blk-device,drive=blk0 \
     -global virtio-mmio.force-legacy=false
 ```
