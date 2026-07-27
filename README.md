@@ -1,73 +1,221 @@
-# Efiks: An experimental general purpose OS
+# efiks-os
 
-A small operating system written in Rust, built to explore and understand low-level systems design.
+**A from-scratch, Unix-like operating system for RISC-V, written primarily in Rust.**
 
-## Overview
+`efiks-os` is an experimental general-purpose kernel built to explore how a modern operating system works beneath its abstractions.
 
-This project is an experimental OS kernel focused on learning and teaching core operating system concepts. It is written in Rust with an emphasis on correctness, clarity, and explicit control over low-level behavior.
+It boots through OpenSBI, runs across multiple RISC-V harts, provides isolated Sv39 address spaces, loads ELF programs, schedules userspace processes, supports copy-on-write process creation, exposes a growing Linux-compatible syscall interface, and persists files through a custom filesystem running over VirtIO block devices.
 
-While the architecture is designed to be ISA-independent, the current implementation targets RISC-V.
+The project is developed as a real systems-engineering exercise rather than as a thin wrapper around an existing kernel or a direct port of xv6. Its main purpose is to build and understand the difficult connective tissue between virtual memory, process execution, scheduling, storage, synchronization and userspace ABIs.
 
-## Goals
+> **Project status:** efiks-os is under active development. It is substantial enough to run selected userspace programs, but it is not a production operating system and does not claim full Linux or POSIX compatibility.
 
-- Build a minimal but realistic OS from first principles
-- Understand core subsystems (memory management, scheduling, traps, syscalls)
-- Provide a clear, inspectable codebase for educational purposes
-- Produce accompanying material explaining design decisions and internals
+## Current capabilities
 
-## Roadmap
+### Architecture and boot
 
-- [x] Boot + OpenSBI (M → S mode)
-- [x] Trap handling and context switching
-- [x] Sv39 virtual memory (per-process address spaces)
-- [x] Multicore support (multi-hart)
-- [x] Basic process model + round-robin scheduler
-- [x] Syscalls (`write`, `read`, `sleep`, `exit`)
-- [x] UART driver (console I/O)
-- [x] Simple heap allocator
-- [x] Basic synchronization primitives (spinlocks)
-- [X] VirtIO block driver for persistent storage.
-- [x] Basic filesystem support
-- [ ] Improve memory management (allocator, paging, regions)
-- [ ] Process lifecycle (cleanup, reaper, better scheduling)
-- [x] Expand syscalls + userspace support (ELF loader)
-- [ ] Improve filesystem (features, robustness)
-- [ ] Device support (e.g. VirtIO)
-- [ ] Strengthen ISA abstraction (beyond RISC-V)
-- [ ] Write accompanying educational content
+* 64-bit RISC-V target
+* OpenSBI boot flow
+* Supervisor-mode kernel
+* QEMU `virt` machine support
+* Multi-hart initialization and execution
+* Architecture-specific code isolated behind dedicated RISC-V abstractions
+* Trap, exception and interrupt handling
+* Timer-driven preemption
+* Context switching between kernel and userspace execution
 
-## Running
+### Virtual memory
 
-Right now, I only have the docs for nix users:
+* Sv39 virtual memory
+* Separate userspace address spaces
+* Kernel direct mapping of physical memory
+* Page-table creation and traversal
+* User and kernel address abstractions
+* Typed user and kernel pointers
+* Virtual-memory-region tracking
+* Demand allocation through page faults
+* Userspace heap growth through `brk`
+* Copy-on-write address-space cloning
+* Physical-page metadata and reference counting
+* User-memory copy and validation helpers
+* Per-process user stacks
+* Per-task kernel stacks
 
-### Enter the devshell
-Use `direnv`:
+### Processes and scheduling
+
+* Preemptive multitasking
+* Multicore scheduling
+* Kernel and userspace tasks
+* Process IDs
+* Task lifecycle states
+* Process creation from ELF executables
+* Parent and child process relationships
+* `fork`-style process creation through a supported subset of Linux `clone`
+* Copy-on-write process memory
+* Child trap-frame construction
+* File-table inheritance
+* Process exit and zombie states
+* Waiting for child processes
+* Deferred task and address-space cleanup
+* Kernel reaper task
+* Sleeping tasks organized by wake-up deadline
+* Blocking and wake-up paths for scheduler-integrated operations
+
+### Userspace execution
+
+* ELF64 loading
+* User/kernel privilege transitions
+* Userspace stack construction
+* `argc` and `argv` setup
+* Syscall entry and return
+* A growing Linux RISC-V syscall ABI subset
+* Selected Zig programs built for Linux running directly on efiks-os
+* Zig userspace support library
+* Interactive Zig shell
+* Userspace process spawning and waiting
+* Standard-library-driven I/O paths such as vectored reads and writes
+
+Linux ABI compatibility is intentionally incremental. A matching syscall number does not imply that every Linux flag, edge case or semantic guarantee is implemented.
+
+### Files and storage
+
+* Virtual filesystem layer
+* File-descriptor tables
+* Standard input, output and error descriptors
+* File open, read, write and close paths
+* Vectored I/O
+* Positional vectored I/O
+* File offset handling
+* Persistent block storage
+* VirtIO block-device support
+* Custom filesystem: **VSFS**
+* Host-side VSFS image creation tool
+* Directory and inode abstractions
+* Block and inode allocation bitmaps
+* Files spanning multiple blocks
+* Allocation rollback and cleanup paths
+* Synchronization around persistent allocation metadata
+
+### Devices and kernel infrastructure
+
+* UART console driver
+* VirtIO MMIO support
+* VirtIO block driver
+* Timer interrupts
+* External interrupt handling
+* Spinlocks and synchronization primitives
+* Kernel heap allocator
+* Physical frame allocator
+* Structured logging
+* GDB support and helper tooling
+* Nix development environment
+
+---
+
+## Example userspace flow
+
+A typical userspace process crosses most of the kernel:
+
+```text
+VSFS file
+   │
+   ▼
+VFS lookup
+   │
+   ▼
+ELF loader
+   │
+   ▼
+new Sv39 address space
+   │
+   ▼
+user stack and argv
+   │
+   ▼
+scheduler
+   │
+   ▼
+userspace execution
+   │
+   ▼
+Linux-compatible syscall entry
+   │
+   ├── file descriptor and VFS operations
+   ├── sleeping and blocking
+   ├── process creation
+   ├── virtual-memory changes
+   └── process exit and reaping
 ```
+
+A process created through `clone` exercises another cross-subsystem path:
+
+```text
+parent process
+   │
+   ├── clone address space using copy-on-write
+   ├── share physical pages through reference counts
+   ├── remove writable access from shared mappings
+   ├── copy execution and trap state
+   ├── inherit file descriptors
+   ├── establish parent/child relationships
+   └── enqueue child into the scheduler
+              │
+              ▼
+       write page fault
+              │
+              ▼
+       allocate private page
+              │
+              ▼
+       copy original contents
+              │
+              ▼
+       resume child execution
+```
+
+---
+
+## Running efiks-os
+
+The documented development path currently uses Nix, Cargo, Zig and QEMU.
+
+### Requirements
+
+* Nix with flakes enabled
+* Rust toolchain supplied by the development shell
+* Zig toolchain supplied by the development shell
+* QEMU with RISC-V system emulation
+
+### Enter the development environment
+
+Using `direnv`:
+
+```console
 direnv allow
 ```
 
-Or just:
-```
+Or directly:
+
+```console
 nix develop
 ```
 
-### Build the sbi bootloader
+### Build OpenSBI
 
-```
+```console
 nix build .#opensbi
 ```
 
-### Build the userspace programs and disk image
+### Create a `VSFS` image
+
 ```
 ./scripts/build-disk.sh
 ```
 
-This rebuilds the Zig shell and `spawned_prog`, installs both under `/foo` in
-the filesystem staging tree, and writes the resulting image to `disk.img`.
+### Build and boot the kernel
 
-### Run the OS
-```
-RUST_LOG=info cargo b -p kernel \
+```console
+RUST_LOG=info cargo build -p kernel \
   && qemu-system-riscv64 \
     -smp 4 \
     -nographic \
@@ -79,18 +227,151 @@ RUST_LOG=info cargo b -p kernel \
     -global virtio-mmio.force-legacy=false
 ```
 
-## Resources
+Useful QEMU options during development include:
 
-1. Huge shoutout to the [OSTEP book](https://pages.cs.wisc.edu/~remzi/OSTEP/) that let me grasp most of the OS concepts. It is a very easy to read book so I strongly recommend it. (don't forget to support the author if you can)
-2. The blog posts of [Uros Popovic](https://popovicu.com/posts/bare-metal-programming-risc-v/) made it easier to bootstrap the project by explaining the qemu RISC-V internals.
-3. The official [RISC-V specification](https://docs.riscv.org/reference/isa/) is very helpful to have the full layout of the registers and basically anything related to the hardware.
-4. Very comprehensive [RISC-V course](https://www.youtube.com/watch?v=VEQL5bJeWB0&list=PLbtzT1TYeoMiKup6aoQc3V_d7OvOKc3P5&index=1) by Harry H. Porter (what a cool name). Reading the specification is not easy and can feel a bit dry. This helps you grasp the RISC-V assembly, trap handling, CSR's, etc. It's basically RISC-V spec but for humans.
-5. I use ChatGPT only for asking questions about the risc-v spec when I'm stuck. LLMs are great tools for fetching you a specific information out of huge documents. But note that, it certainly won't help to let the AI code for you in this case. The learning comes from suffering.
-6. [xv6-kernel documentation by MIT](https://pdos.csail.mit.edu/6.828/2020/xv6/book-riscv-rev1.pdf) I skim through the documentation to see their choice of algorithms. Would be a great source if you prefer to follow this course with it's source code entirely.
+```console
+-s -S
+```
 
-## Contribution
-I'm not an expert at all. I'm just learning things by doing it. So, feel free to drop an issue if you:
-- spot an error,
-- think that there is a better way of doing things,
-- have any questions. (issue labeled as "question")
+These expose a GDB server on port `1234` and pause the machine before execution.
 
+---
+
+## Development philosophy
+
+### Build the complete path
+
+A feature is most valuable when it is exercised through real userspace.
+
+For example, filesystem support is not considered only as an on-disk format. It must participate in:
+
+* VirtIO requests,
+* block allocation,
+* VFS lookup,
+* file descriptors,
+* syscall argument validation,
+* process inheritance,
+* and cleanup on process exit.
+
+### Prefer explicit behavior
+
+efiks-os uses Rust to improve the visibility of ownership and invariants, not to pretend that low-level programming has become automatically safe.
+
+Unsafe behavior is unavoidable in areas such as:
+
+* page-table manipulation,
+* context switching,
+* trap frames,
+* MMIO,
+* physical-memory mappings,
+* and userspace pointer access.
+
+The goal is to isolate those operations behind types and APIs whose contracts can be reviewed.
+
+### Use existing ABIs as pressure tests
+
+The kernel implements a selected subset of the Linux RISC-V syscall ABI. This allows real toolchains and standard-library code to reveal incorrect assumptions that handcrafted userspace tests may miss.
+
+Zig userspace has already exercised behavior around:
+
+* vectored I/O,
+* process spawning,
+* waiting,
+* heap growth,
+* terminal-like operations,
+* file handling,
+* and exact return-value semantics.
+
+### Treat failure paths as part of the feature
+
+Kernel operations often acquire several resources before completion. A correct implementation must handle failures after any intermediate allocation or state change.
+
+The project increasingly focuses on:
+
+* rollback,
+* reference ownership,
+* deferred cleanup,
+* allocation failure,
+* task teardown,
+* and concurrency-safe state transitions.
+
+---
+
+## Current limitations
+
+efiks-os remains experimental.
+
+Notable limitations include:
+
+* only RISC-V is currently supported,
+* QEMU `virt` is the primary platform,
+* Linux syscall compatibility is incomplete,
+* POSIX behavior is incomplete,
+* dynamically linked Linux binaries are not a general compatibility target yet,
+* the process and thread models are not fully separated,
+* signal support is limited or absent,
+* networking is not implemented,
+* filesystem crash consistency is not production-grade,
+* security hardening is not a current claim,
+* device coverage is intentionally small,
+* and many resource and concurrency paths still need stress testing.
+
+Unsupported functionality should generally fail explicitly rather than silently pretending to provide full Linux semantics.
+
+---
+
+## Debugging
+
+The repository includes GDB configuration and helper tooling under:
+
+```text
+tools/gdb/
+```
+
+A typical debugging session starts QEMU paused with a GDB server:
+
+```console
+qemu-system-riscv64 \
+  -s \
+  -S \
+  ...
+```
+
+Then connect using a RISC-V-aware GDB build:
+
+```console
+target remote :1234
+```
+
+The exact debugger command depends on the toolchain available in the Nix development environment.
+
+---
+
+## Learning resources
+
+The following resources have been especially useful during development:
+
+1. **Operating Systems: Three Easy Pieces**
+   A clear introduction to virtual memory, scheduling, concurrency, persistence and other core operating-system concepts.
+
+2. **The RISC-V privileged and unprivileged specifications**
+   The authoritative reference for privilege modes, CSRs, traps, address translation and instruction behavior.
+
+3. **Uros Popovic’s RISC-V and QEMU articles**
+   Helpful material for understanding early bootstrapping and QEMU’s RISC-V environment.
+
+4. **Harry H. Porter’s RISC-V material**
+   A more approachable companion to the architectural specifications.
+
+5. **MIT xv6 and its accompanying book**
+   A valuable reference for studying one coherent implementation of Unix-like kernel concepts.
+
+These resources are references, not templates for the complete efiks-os design.
+
+---
+
+## License
+
+efiks-os is licensed under the **GNU General Public License v3.0**.
+
+See [`LICENSE`](LICENSE) for the complete license text.
